@@ -26,7 +26,7 @@ _TG_USER_ID    = os.getenv("TELEGRAM_USER_ID", "")
 _CLAUDE_API_KEY = os.getenv("CLAUDE_API_KEY", "")
 
 # 알고리즘 이름 정규화 (자유 입력 → 내부 키)
-_KNOWN_ALGOS = ["골삼이", "골든샘플", "레드삼각"]
+_KNOWN_ALGOS = ["골삼이", "골든샘플", "레드삼각", "골삼이(상승초입)"]
 
 _ALLOWED_STATUSES = {"반영됨", "반려됨"}
 
