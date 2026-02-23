@@ -210,7 +210,7 @@ async def cmd_watchlist(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     last_scan = data.get("last_scan", "없음")
     lines = [f"📋 *워치리스트* \\(마지막 스캔: {last_scan}\\)\n"]
     for s in stocks:
-        emoji = {"골삼이": "🔵", "골든샘플": "🟢", "레드삼각": "🔴", "골삼이(상승초입)": "🔺"}.get(s["pattern"], "📌")
+        emoji = {"골삼이": "🔵", "골든샘플": "🟢", "레드삼각": "🔴", "골삼이(상승초입)": "🚀"}.get(s["pattern"], "📌")
         lines.append(
             f"{emoji} {s['name']} \\({s['ticker']}\\) \\- {s['pattern']} \\[{s['added_date']}\\]"
         )
