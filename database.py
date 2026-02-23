@@ -62,6 +62,7 @@ _DEFAULT_CONFIGS: dict[str, dict] = {
         "proj_days_min": 3,     # 골든크로스 예상 최소 일수
         "proj_days_max": 15,    # 골든크로스 예상 최대 일수
         "ma240_flat_tol": 0.005, # 240MA 하락 판정 임계값 (0.5%)
+        "price_surge_limit": 0.50, # 20거래일 전 3일 평균가 대비 현재가 최대 상승 한도 (50%)
         "conf_base": 72,        # 기본 신뢰도
         "conf_body60": 8,       # 몸통 60% 이상 시 가산점
         "conf_vol5x": 8,        # 거래량 5배 이상 시 가산점
@@ -116,6 +117,7 @@ _PARAM_DOCS: dict[str, dict[str, str]] = {
         "proj_days_min":  "골든크로스 예상 최소 일수 (기본: 3)",
         "proj_days_max":  "골든크로스 예상 최대 일수 (기본: 15)",
         "ma240_flat_tol": "240MA 하락 판정 임계값 (기본: 0.005 = 0.5%)",
+        "price_surge_limit": "20거래일 전 3일 평균가 대비 현재가 최대 상승 한도 (기본: 0.50 = 50%)",
         "conf_base":      "기본 신뢰도 점수 (기본: 72)",
         "conf_body60":    "몸통 60% 이상 시 신뢰도 가산점 (기본: 8)",
         "conf_vol5x":     "거래량 5배 이상 시 신뢰도 가산점 (기본: 8)",

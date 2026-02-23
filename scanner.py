@@ -327,14 +327,15 @@ def detect_golsami_early(df: pd.DataFrame, ticker: str, cfg: dict) -> dict | Non
     if pd.isna(ma240) or ma240 == 0 or pd.isna(ma20) or ma20 == 0:
         return None
 
-    window          = int(cfg["window"])
-    big_pct         = float(cfg["big_pct"])
-    body_ratio      = float(cfg["body_ratio"])
-    vol_mult        = float(cfg["vol_mult"])
-    ma20_cross_tol  = float(cfg["ma20_cross_tol"])
-    proj_days_min   = int(cfg["proj_days_min"])
-    proj_days_max   = int(cfg["proj_days_max"])
-    ma240_flat_tol  = float(cfg["ma240_flat_tol"])
+    window            = int(cfg["window"])
+    big_pct           = float(cfg["big_pct"])
+    body_ratio        = float(cfg["body_ratio"])
+    vol_mult          = float(cfg["vol_mult"])
+    ma20_cross_tol    = float(cfg["ma20_cross_tol"])
+    proj_days_min     = int(cfg["proj_days_min"])
+    proj_days_max     = int(cfg["proj_days_max"])
+    ma240_flat_tol    = float(cfg["ma240_flat_tol"])
+    price_surge_limit = float(cfg.get("price_surge_limit", 0.50))
 
     # 조건 1: 240MA 방향 — 하락(< -0.5%) 이면 제외
     if len(df) < 260:
@@ -387,6 +388,16 @@ def detect_golsami_early(df: pd.DataFrame, ticker: str, cfg: dict) -> dict | Non
             break
 
     if not ma20_cross_ok:
+        return None
+
+    # 조건 5: 현재가가 20거래일 전 3일 평균가 대비 price_surge_limit 이내
+    # (-22, -21, -20 인덱스 = 20거래일 전 기준 3일 평균)
+    if len(df) < 23:
+        return None
+    ref_avg = df["Close"].iloc[-22:-19].mean()
+    if pd.isna(ref_avg) or ref_avg == 0:
+        return None
+    if price > ref_avg * (1 + price_surge_limit):
         return None
 
     # 신뢰도 계산
