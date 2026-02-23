@@ -1,0 +1,10 @@
+pykrx
+pandas
+numpy
+APScheduler>=3.10
+requests
+beautifulsoup4
+lxml
+fastapi
+uvicorn[standard]
+pyngrok

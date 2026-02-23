@@ -1,0 +1,814 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>주식 패턴 대시보드</title>
+<style>
+:root {
+  --bg: #0f1117; --surface: #1a1d2e; --surface2: #252840;
+  --border: #2e3250; --text: #e2e8f0; --text-muted: #8892b0;
+  --accent: #7c83fd; --accent2: #52d9c8;
+  --red: #f87171; --green: #4ade80; --yellow: #fbbf24;
+  --radius: 8px; --font: 'Segoe UI', system-ui, sans-serif;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: var(--bg); color: var(--text); font-family: var(--font); font-size: 14px; }
+
+header {
+  background: var(--surface); border-bottom: 1px solid var(--border);
+  padding: 10px 20px; display: flex; align-items: center; justify-content: space-between;
+}
+header h1 { font-size: 17px; font-weight: 600; color: var(--accent); }
+.subtitle { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
+
+.tabs {
+  display: flex; border-bottom: 1px solid var(--border);
+  background: var(--surface); padding: 0 20px; gap: 2px;
+}
+.tab-btn {
+  padding: 8px 14px; border: none; background: transparent;
+  color: var(--text-muted); cursor: pointer; font-size: 13px;
+  font-family: var(--font); border-bottom: 2px solid transparent;
+  transition: color .15s, border-color .15s;
+}
+.tab-btn:hover { color: var(--text); }
+.tab-btn.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+.tab-panel { display: none; padding: 14px 20px; }
+.tab-panel.active { display: block; }
+
+.panel-header {
+  display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px;
+}
+.panel-header h2 { font-size: 15px; font-weight: 600; }
+.controls { display: flex; gap: 8px; align-items: center; }
+
+select {
+  background: var(--surface2); color: var(--text); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 6px 10px; font-family: var(--font); font-size: 13px;
+}
+.btn {
+  background: var(--surface2); color: var(--text); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 6px 14px; font-family: var(--font);
+  font-size: 13px; cursor: pointer; transition: background .15s;
+}
+.btn:hover { background: var(--border); }
+.btn-primary {
+  background: var(--accent); color: #fff; border-color: var(--accent); font-weight: 600;
+}
+.btn-primary:hover { opacity: .9; background: var(--accent); }
+
+/* 통계 카드 */
+.stat-row { display: flex; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; }
+.stat-card {
+  background: var(--surface2); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 7px 14px;
+}
+.stat-label { font-size: 11px; color: var(--text-muted); margin-bottom: 2px; }
+.stat-value { font-size: 18px; font-weight: 700; color: var(--accent); }
+
+/* 테이블 */
+.table-wrap { overflow-x: auto; border-radius: var(--radius); border: 1px solid var(--border); }
+table { width: 100%; border-collapse: collapse; white-space: nowrap; }
+thead th {
+  background: var(--surface2); padding: 7px 10px; text-align: left;
+  font-size: 11px; font-weight: 600; color: var(--text-muted);
+  text-transform: uppercase; letter-spacing: .05em; border-bottom: 1px solid var(--border);
+}
+tbody tr { border-bottom: 1px solid var(--border); transition: background .12s; }
+tbody tr:last-child { border-bottom: none; }
+tbody tr:hover { background: var(--surface2); }
+td { padding: 6px 10px; font-size: 13px; vertical-align: middle; }
+
+/* 배지 */
+.badge {
+  display: inline-block; padding: 2px 8px; border-radius: 99px;
+  font-size: 11px; font-weight: 600;
+}
+.badge-골삼이  { background: #1e3a5f; color: #7cb8ff; }
+.badge-골든샘플 { background: #1a3d2e; color: #4ade80; }
+.badge-레드삼각 { background: #3d1a1a; color: #f87171; }
+.badge-검토중  { background: #2d2d10; color: #fbbf24; }
+.badge-반영됨  { background: #1a3d2e; color: #4ade80; }
+.badge-반려됨  { background: #3d1a1a; color: #f87171; }
+
+/* 신뢰도 바 */
+.conf-wrap { display: flex; align-items: center; gap: 7px; min-width: 90px; }
+.conf-bar { flex: 1; height: 5px; background: var(--border); border-radius: 3px; overflow: hidden; }
+.conf-fill { height: 100%; border-radius: 3px; background: linear-gradient(90deg, var(--accent2), var(--accent)); }
+.conf-num { font-size: 12px; color: var(--text-muted); min-width: 30px; }
+
+/* 수익률 */
+.ret-pos { color: var(--green); font-weight: 600; }
+.ret-neg { color: var(--red); font-weight: 600; }
+.ret-zero { color: var(--text-muted); }
+
+/* 52주 바 */
+.w52-wrap { min-width: 110px; }
+.w52-bar { position: relative; width: 90px; height: 5px; background: var(--border); border-radius: 3px; }
+.w52-dot {
+  position: absolute; top: -4px; width: 10px; height: 10px;
+  background: var(--accent); border-radius: 50%; transform: translateX(-50%);
+}
+.w52-text { font-size: 10px; color: var(--text-muted); margin-top: 3px; }
+
+/* 알고리즘 아코디언 */
+.algo-section { margin-bottom: 12px; }
+.algo-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 8px; }
+.algo-card {
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+}
+.algo-card summary {
+  padding: 9px 13px; cursor: pointer; font-weight: 600; font-size: 13px;
+  display: flex; align-items: center; gap: 8px;
+  list-style: none; user-select: none;
+}
+.algo-card summary::-webkit-details-marker { display: none; }
+.algo-card[open] summary { border-bottom: 1px solid var(--border); }
+.algo-card summary .chevron { margin-left: auto; font-size: 11px; color: var(--text-muted); transition: transform .2s; }
+.algo-card[open] summary .chevron { transform: rotate(180deg); }
+.algo-body { padding: 10px 13px; font-size: 13px; line-height: 1.6; color: var(--text-muted); }
+.algo-body strong { color: var(--text); }
+.algo-body ul { padding-left: 16px; margin: 6px 0; }
+.algo-body li { margin: 3px 0; }
+.algo-chip {
+  display: inline-block; background: var(--surface2); border: 1px solid var(--border);
+  border-radius: 4px; padding: 1px 7px; font-size: 11px; margin: 2px 2px 2px 0;
+}
+
+/* 요청 목록 아코디언 */
+.req-list { display: flex; flex-direction: column; gap: 6px; }
+.req-item {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); overflow: hidden;
+}
+.req-summary {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 14px; cursor: pointer; user-select: none;
+}
+.req-summary:hover { background: var(--surface2); }
+.req-summary .req-meta { display: flex; align-items: center; gap: 8px; flex: 1; flex-wrap: wrap; }
+.req-summary .req-date { font-size: 11px; color: var(--text-muted); white-space: nowrap; }
+.req-summary .req-name { font-size: 13px; font-weight: 600; }
+.req-summary .req-chevron { margin-left: auto; font-size: 11px; color: var(--text-muted); transition: transform .2s; flex-shrink: 0; }
+.req-item.open .req-chevron { transform: rotate(180deg); }
+.req-content {
+  display: none; padding: 14px 16px; border-top: 1px solid var(--border);
+  font-size: 13px; color: var(--text-muted); line-height: 1.7;
+}
+.req-item.open .req-content { display: block; }
+.req-desc { white-space: pre-wrap; word-break: break-all; margin-bottom: 12px; }
+.req-actions { display: flex; gap: 8px; }
+.req-note {
+  margin-top: 10px; padding: 8px 12px; border-radius: var(--radius);
+  font-size: 12px; white-space: pre-wrap;
+  background: var(--surface2); color: var(--text-muted); border: 1px solid var(--border);
+}
+.btn-approve { background: #1a3d2e; color: var(--green); border-color: #2a5a40; }
+.btn-approve:hover { background: #224d38; }
+.btn-reject  { background: #3d1a1a; color: var(--red);   border-color: #5a2a2a; }
+.btn-reject:hover  { background: #4d2222; }
+
+/* 현재 파라미터 패널 */
+.cfg-section { margin-bottom: 16px; }
+.cfg-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 8px; }
+.cfg-card {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 12px 14px;
+}
+.cfg-card h4 { font-size: 13px; font-weight: 600; margin-bottom: 8px; }
+.cfg-row { display: flex; justify-content: space-between; align-items: center;
+  padding: 3px 0; border-bottom: 1px solid var(--border); font-size: 12px; }
+.cfg-row:last-child { border-bottom: none; }
+.cfg-key { color: var(--text-muted); }
+.cfg-val { color: var(--accent); font-weight: 600; font-family: monospace; }
+
+/* 요청 폼 */
+.form-card {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 14px; margin-bottom: 14px;
+}
+.form-card h3 { font-size: 13px; font-weight: 600; margin-bottom: 10px; }
+.form-row { margin-bottom: 8px; }
+.form-row label { display: block; font-size: 12px; color: var(--text-muted); margin-bottom: 4px; }
+.form-row input, .form-row textarea, .form-row select {
+  width: 100%; background: var(--surface2); color: var(--text);
+  border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 8px 12px; font-family: var(--font); font-size: 13px;
+}
+.form-row textarea { resize: vertical; min-height: 90px; }
+.radio-group { display: flex; gap: 16px; }
+.radio-group label {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 13px; color: var(--text); cursor: pointer;
+}
+.form-msg { font-size: 13px; margin-top: 10px; padding: 8px 12px; border-radius: var(--radius); display: none; }
+.form-msg.ok  { background: #1a3d2e; color: var(--green); display: block; }
+.form-msg.err { background: #3d1a1a; color: var(--red); display: block; }
+
+.empty { text-align: center; padding: 40px; color: var(--text-muted); }
+.loading { text-align: center; padding: 40px; color: var(--text-muted); }
+.spinner {
+  display: inline-block; width: 16px; height: 16px; border: 2px solid var(--border);
+  border-top-color: var(--accent); border-radius: 50%;
+  animation: spin .7s linear infinite; vertical-align: middle; margin-right: 6px;
+}
+.spinner-inline {
+  display: inline-block; width: 12px; height: 12px; border: 2px solid var(--border);
+  border-top-color: var(--accent); border-radius: 50%;
+  animation: spin .7s linear infinite; vertical-align: middle;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+
+<header>
+  <div>
+    <h1>📈 주식 패턴 대시보드</h1>
+    <div class="subtitle" id="last-updated">로딩 중...</div>
+  </div>
+</header>
+
+<div class="tabs">
+  <button class="tab-btn active" onclick="switchTab('today')">오늘 스캔</button>
+  <button class="tab-btn" onclick="switchTab('history')">전체 이력</button>
+  <button class="tab-btn" onclick="switchTab('tracking')">종목별 추적</button>
+  <button class="tab-btn" onclick="switchTab('algo')">알고리즘 요청</button>
+</div>
+
+<!-- ────────────── 탭1: 오늘 스캔 ────────────── -->
+<div class="tab-panel active" id="tab-today">
+
+  <!-- 알고리즘 설명 아코디언 -->
+  <div class="algo-section">
+    <div class="algo-grid">
+
+      <details class="algo-card">
+        <summary>
+          <span class="badge badge-골삼이">📊 골삼이</span>
+          대양봉 시가 지지 패턴
+          <span class="chevron">▼</span>
+        </summary>
+        <div class="algo-body">
+          <strong>개요</strong><br>
+          대양봉 발생 후 현재가가 대양봉 시가 부근 + 20MA 부근에서 지지받는 패턴입니다.
+          매도세가 소화된 후 재상승을 노리는 전략입니다.<br><br>
+          <strong>감지 조건</strong>
+          <ul>
+            <li>최근 <strong>25일 이내</strong> 대양봉 발생 (+15% 이상, 거래량 20MA의 10배↑)</li>
+            <li>현재가가 대양봉 시가 <strong>±5%</strong> 구간 + 20MA <strong>±5%</strong> 구간 동시 충족</li>
+            <li>20MA 우상향 (현재 > 6일 전)</li>
+            <li>대양봉 이후 거래량이 대양봉의 <strong>50% 미만</strong>으로 감소</li>
+          </ul>
+          <strong>매수존 / 손절</strong><br>
+          <span class="algo-chip">매수존: 대양봉 시가 ±5%</span>
+          <span class="algo-chip">손절: 20MA × 0.95</span>
+          <span class="algo-chip">목표: 대양봉 고가</span><br><br>
+          <strong>신뢰도 가산</strong>
+          <ul>
+            <li>시가 2% 이내 근접: <strong>+15점</strong></li>
+            <li>시가 3.5% 이내 근접: <strong>+8점</strong></li>
+            <li>대양봉 +29% 이상: <strong>+10점</strong></li>
+            <li>20MA 기울기 2% 이상: <strong>+7점</strong></li>
+          </ul>
+        </div>
+      </details>
+
+      <details class="algo-card">
+        <summary>
+          <span class="badge badge-골든샘플">🔑 골든샘플</span>
+          거래량 고갈 패턴
+          <span class="chevron">▼</span>
+        </summary>
+        <div class="algo-body">
+          <strong>개요</strong><br>
+          대양봉 이후 거래량이 급격히 줄면서 주가가 유지되는 패턴입니다.
+          매도 물량이 소진된 상태로, 작은 매수세에도 상승할 수 있는 구간입니다.<br><br>
+          <strong>감지 조건</strong>
+          <ul>
+            <li>최근 <strong>15일 이내</strong> 대양봉 발생 (+15% 이상, 거래량 20MA의 10배↑)</li>
+            <li>대양봉 이후 평균 거래량이 대양봉의 <strong>20% 미만</strong> (고갈)</li>
+            <li>대양봉 이후 종가가 대양봉 종가의 <strong>90% 이상</strong> 유지</li>
+            <li>현재가 20MA 위, 20MA 우상향</li>
+          </ul>
+          <strong>매수존 / 손절</strong><br>
+          <span class="algo-chip">매수존: 20MA 부근</span>
+          <span class="algo-chip">손절: 20MA × 0.95</span>
+          <span class="algo-chip">목표: 대양봉 고가</span><br><br>
+          <strong>신뢰도 가산</strong>
+          <ul>
+            <li>대양봉 후 경과 10일 이상: <strong>+8점</strong></li>
+            <li>대양봉 +29% 이상: <strong>+7점</strong></li>
+          </ul>
+        </div>
+      </details>
+
+      <details class="algo-card">
+        <summary>
+          <span class="badge badge-레드삼각">📐 레드삼각</span>
+          박스권 돌파 후 눌림 패턴
+          <span class="chevron">▼</span>
+        </summary>
+        <div class="algo-body">
+          <strong>개요</strong><br>
+          횡보 박스권을 대양봉으로 돌파한 후, 60MA까지 눌림(조정)이 온 패턴입니다.
+          지지선(60MA) 확인 후 재상승을 노리는 전략입니다.<br><br>
+          <strong>감지 조건</strong>
+          <ul>
+            <li>60~90일 전: 박스권 횡보 (고저 편차 <strong>15% 미만</strong>)</li>
+            <li>20~60일 전: 대양봉 <strong>2개 이상</strong> 발생 (+15% 이상)</li>
+            <li>현재가: 60MA <strong>±5%</strong> 구간, 60MA 우상향, 박스권 상단 93% 이상</li>
+          </ul>
+          <strong>매수존 / 손절</strong><br>
+          <span class="algo-chip">매수존: 60MA ±2% ~ 박스권 상단</span>
+          <span class="algo-chip">손절: 60MA × 0.95</span>
+          <span class="algo-chip">목표: 돌파 구간 최고가</span><br><br>
+          <strong>신뢰도 가산</strong>
+          <ul>
+            <li>대양봉 3개 이상: <strong>+10점</strong></li>
+            <li>60MA 2% 이내 근접: <strong>+8점</strong></li>
+          </ul>
+        </div>
+      </details>
+
+    </div>
+  </div>
+
+  <div class="panel-header">
+    <h2>오늘 스캔 결과</h2>
+    <button class="btn" onclick="loadLatest()">↻ 새로고침</button>
+  </div>
+  <div class="stat-row" id="stats-row"></div>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>패턴</th><th>종목명</th><th>신뢰도</th>
+          <th>현재가</th><th>목표가</th><th>손절가</th>
+          <th>매수존</th><th>52주 범위</th><th>시가총액</th>
+        </tr>
+      </thead>
+      <tbody id="today-body">
+        <tr><td colspan="9" class="loading"><span class="spinner"></span>로딩 중...</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ────────────── 탭2: 전체 이력 ────────────── -->
+<div class="tab-panel" id="tab-history">
+  <div class="panel-header">
+    <h2>전체 이력</h2>
+    <div class="controls">
+      <select id="history-days" onchange="loadHistory()">
+        <option value="7">7일</option>
+        <option value="30" selected>30일</option>
+        <option value="90">90일</option>
+      </select>
+      <button class="btn" onclick="loadHistory()">↻ 새로고침</button>
+    </div>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>날짜</th><th>패턴</th><th>종목명</th><th>신뢰도</th>
+          <th>현재가</th><th>목표가</th><th>손절가</th><th>매수존</th>
+        </tr>
+      </thead>
+      <tbody id="history-body">
+        <tr><td colspan="8" class="loading"><span class="spinner"></span>로딩 중...</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ────────────── 탭3: 종목별 추적 ────────────── -->
+<div class="tab-panel" id="tab-tracking">
+  <div class="panel-header">
+    <h2>종목별 추적</h2>
+    <div class="controls">
+      <button class="btn" id="btn-fetch-prices" onclick="fetchAllPrices()">📡 현재가 불러오기</button>
+      <button class="btn" onclick="loadTracking()">↻ 새로고침</button>
+    </div>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>종목</th><th>최초 감지가</th><th>패턴</th>
+          <th>수익률</th><th>현재가</th>
+          <th>총 감지</th><th>최초 감지일</th><th>마지막 신뢰도</th>
+        </tr>
+      </thead>
+      <tbody id="tracking-body">
+        <tr><td colspan="9" class="loading"><span class="spinner"></span>로딩 중...</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ────────────── 탭4: 알고리즘 요청 ────────────── -->
+<div class="tab-panel" id="tab-algo">
+
+  <div class="form-card">
+    <h3>✏️ 알고리즘 정정 / 신규 제안</h3>
+
+    <div class="form-row">
+      <label>요청 유형</label>
+      <div class="radio-group">
+        <label><input type="radio" name="req_type" value="정정 요청" checked> 기존 알고리즘 정정 요청</label>
+        <label><input type="radio" name="req_type" value="새 알고리즘 제안"> 새 알고리즘 제안</label>
+      </div>
+    </div>
+
+    <div class="form-row">
+      <label>알고리즘 이름</label>
+      <input id="req-algo-name" type="text" placeholder="예) 골삼이 / 새 패턴 이름" maxlength="50">
+    </div>
+
+    <div class="form-row">
+      <label>설명 (조건, 근거, 개선점 등)</label>
+      <textarea id="req-description" placeholder="구체적인 조건이나 개선 이유를 작성해주세요." maxlength="2000"></textarea>
+    </div>
+
+    <button class="btn btn-primary" onclick="submitRequest()">제출하기</button>
+    <div class="form-msg" id="form-msg"></div>
+  </div>
+
+  <!-- 현재 파라미터 -->
+  <div class="cfg-section">
+    <div class="panel-header" style="margin-bottom:8px">
+      <h2>현재 알고리즘 파라미터</h2>
+      <button class="btn" onclick="loadConfigs()">↻ 새로고침</button>
+    </div>
+    <div class="cfg-grid" id="cfg-grid">
+      <div class="loading"><span class="spinner"></span>로딩 중...</div>
+    </div>
+  </div>
+
+  <div class="panel-header">
+    <h2>제출된 요청 목록</h2>
+    <button class="btn" onclick="loadRequests()">↻ 새로고침</button>
+  </div>
+  <div id="requests-list">
+    <div class="loading"><span class="spinner"></span>로딩 중...</div>
+  </div>
+</div>
+
+<script>
+// ── 유틸 ─────────────────────────────────────────────────────────────
+
+const KRW = n => n ? '₩' + Number(n).toLocaleString('ko-KR') : '—';
+const fmtMcap = n => {
+  if (!n) return '—';
+  const t = n / 1e12;
+  if (t >= 1) return t.toFixed(1) + '조';
+  return (n / 1e8).toFixed(0) + '억';
+};
+const fmtDate = iso => iso ? iso.slice(0, 16).replace('T', ' ') : '—';
+
+function badge(p) {
+  const map = { '골삼이': '📊 골삼이', '골든샘플': '🔑 골든샘플', '레드삼각': '📐 레드삼각' };
+  const cls = 'badge-' + p;
+  return `<span class="badge ${cls}">${map[p] || p}</span>`;
+}
+
+function confBar(conf) {
+  return `<div class="conf-wrap">
+    <div class="conf-bar"><div class="conf-fill" style="width:${conf}%"></div></div>
+    <span class="conf-num">${conf}%</span></div>`;
+}
+
+function week52Cell(cur, lo, hi) {
+  if (!lo || !hi || lo === hi) return '—';
+  const pct = Math.max(0, Math.min(100, (cur - lo) / (hi - lo) * 100));
+  return `<div class="w52-wrap">
+    <div class="w52-bar"><div class="w52-dot" style="left:${pct}%"></div></div>
+    <div class="w52-text">${fmtMcap(lo)} ~ ${fmtMcap(hi)}</div></div>`;
+}
+
+function entryZone(r) {
+  if (r.entry_low && r.entry_high && r.entry_low !== r.entry_high)
+    return `${KRW(r.entry_low)} ~ ${KRW(r.entry_high)}`;
+  if (r.entry_low) return KRW(r.entry_low) + ' 부근';
+  return '—';
+}
+
+function retCell(firstPrice, currentPrice) {
+  if (!firstPrice || !currentPrice) return '—';
+  const pct = (currentPrice - firstPrice) / firstPrice * 100;
+  const sign = pct > 0 ? '+' : '';
+  const cls = pct > 0 ? 'ret-pos' : pct < 0 ? 'ret-neg' : 'ret-zero';
+  return `<span class="${cls}">${sign}${pct.toFixed(1)}%</span>`;
+}
+
+async function apiFetch(path) {
+  const res = await fetch(path);
+  if (!res.ok) throw new Error(res.statusText);
+  return res.json();
+}
+
+// ── 탭1: 오늘 스캔 ───────────────────────────────────────────────────
+
+async function loadLatest() {
+  const tbody = document.getElementById('today-body');
+  tbody.innerHTML = '<tr><td colspan="9" class="loading"><span class="spinner"></span>로딩 중...</td></tr>';
+  try {
+    const data = await apiFetch('/api/latest');
+    document.getElementById('last-updated').textContent = '마지막 갱신: ' + new Date().toLocaleString('ko-KR');
+
+    document.getElementById('stats-row').innerHTML = `
+      <div class="stat-card"><div class="stat-label">감지 종목</div><div class="stat-value">${data.length}</div></div>
+      <div class="stat-card"><div class="stat-label">골삼이</div><div class="stat-value">${data.filter(r=>r.pattern==='골삼이').length}</div></div>
+      <div class="stat-card"><div class="stat-label">골든샘플</div><div class="stat-value">${data.filter(r=>r.pattern==='골든샘플').length}</div></div>
+      <div class="stat-card"><div class="stat-label">레드삼각</div><div class="stat-value">${data.filter(r=>r.pattern==='레드삼각').length}</div></div>
+    `;
+
+    if (!data.length) {
+      tbody.innerHTML = '<tr><td colspan="9" class="empty">감지된 패턴이 없습니다.</td></tr>';
+      return;
+    }
+    tbody.innerHTML = data.map(r => `<tr>
+      <td>${badge(r.pattern)}</td>
+      <td><strong>${escHtml(r.name)}</strong><br><span style="font-size:11px;color:var(--text-muted)">${escHtml(r.ticker)}</span></td>
+      <td>${confBar(r.conf)}</td>
+      <td style="font-weight:600">${KRW(r.current_price)}</td>
+      <td style="color:var(--yellow)">${KRW(r.target_price)}</td>
+      <td style="color:var(--red)">${KRW(r.stop_loss)}</td>
+      <td>${entryZone(r)}</td>
+      <td>${week52Cell(r.current_price, r.week52_low, r.week52_high)}</td>
+      <td style="font-size:12px;color:var(--text-muted)">${fmtMcap(r.market_cap)}</td>
+    </tr>`).join('');
+  } catch(e) {
+    tbody.innerHTML = `<tr><td colspan="9" class="empty">오류: ${escHtml(e.message)}</td></tr>`;
+  }
+}
+
+// ── 탭2: 전체 이력 ───────────────────────────────────────────────────
+
+async function loadHistory() {
+  const days = document.getElementById('history-days').value;
+  const tbody = document.getElementById('history-body');
+  tbody.innerHTML = '<tr><td colspan="8" class="loading"><span class="spinner"></span>로딩 중...</td></tr>';
+  try {
+    const data = await apiFetch(`/api/history?days=${days}`);
+    if (!data.length) {
+      tbody.innerHTML = '<tr><td colspan="8" class="empty">이력이 없습니다.</td></tr>';
+      return;
+    }
+    tbody.innerHTML = data.map(r => `<tr>
+      <td style="font-size:12px;color:var(--text-muted)">${fmtDate(r.scanned_at)}</td>
+      <td>${badge(r.pattern)}</td>
+      <td><strong>${escHtml(r.name)}</strong><br><span style="font-size:11px;color:var(--text-muted)">${escHtml(r.ticker)}</span></td>
+      <td>${confBar(r.conf)}</td>
+      <td style="font-weight:600">${KRW(r.current_price)}</td>
+      <td style="color:var(--yellow)">${KRW(r.target_price)}</td>
+      <td style="color:var(--red)">${KRW(r.stop_loss)}</td>
+      <td>${entryZone(r)}</td>
+    </tr>`).join('');
+  } catch(e) {
+    tbody.innerHTML = `<tr><td colspan="8" class="empty">오류: ${escHtml(e.message)}</td></tr>`;
+  }
+}
+
+// ── 탭3: 종목별 추적 ─────────────────────────────────────────────────
+
+let _trackingData = [];
+
+async function loadTracking() {
+  const tbody = document.getElementById('tracking-body');
+  tbody.innerHTML = '<tr><td colspan="9" class="loading"><span class="spinner"></span>로딩 중...</td></tr>';
+  try {
+    _trackingData = await apiFetch('/api/stocks');
+    renderTracking();
+  } catch(e) {
+    tbody.innerHTML = `<tr><td colspan="9" class="empty">오류: ${escHtml(e.message)}</td></tr>`;
+  }
+}
+
+function renderTracking() {
+  const tbody = document.getElementById('tracking-body');
+  if (!_trackingData.length) {
+    tbody.innerHTML = '<tr><td colspan="9" class="empty">추적 중인 종목이 없습니다.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = _trackingData.map(r => `<tr id="tr-${escHtml(r.ticker)}">
+    <td><strong>${escHtml(r.name)}</strong><br><span style="font-size:11px;color:var(--text-muted)">${escHtml(r.ticker)}</span></td>
+    <td>${KRW(r.first_price)}</td>
+    <td>${badge(r.last_pattern)}</td>
+    <td id="ret-${r.ticker}">—</td>
+    <td id="cur-${r.ticker}"><span class="spinner-inline"></span></td>
+    <td style="text-align:center;font-weight:700;color:var(--accent)">${r.total_hits}회</td>
+    <td style="font-size:12px;color:var(--text-muted)">${fmtDate(r.first_detected)}</td>
+    <td>${confBar(r.last_conf)}</td>
+  </tr>`).join('');
+}
+
+async function fetchAllPrices() {
+  if (!_trackingData.length) return;
+  const btn = document.getElementById('btn-fetch-prices');
+  btn.disabled = true;
+  btn.textContent = '불러오는 중...';
+
+  for (const r of _trackingData) {
+    try {
+      const res = await apiFetch(`/api/price/${r.ticker}`);
+      const curEl = document.getElementById(`cur-${r.ticker}`);
+      const retEl = document.getElementById(`ret-${r.ticker}`);
+      if (curEl) curEl.textContent = KRW(res.price);
+      if (retEl) retEl.innerHTML = retCell(r.first_price, res.price);
+    } catch(e) {
+      const curEl = document.getElementById(`cur-${r.ticker}`);
+      if (curEl) curEl.textContent = '오류';
+    }
+    await new Promise(res => setTimeout(res, 200)); // 요청 간격
+  }
+
+  btn.disabled = false;
+  btn.textContent = '📡 현재가 불러오기';
+}
+
+// ── 탭4: 알고리즘 요청 ───────────────────────────────────────────────
+
+async function loadRequests() {
+  const container = document.getElementById('requests-list');
+  container.innerHTML = '<div class="loading"><span class="spinner"></span>로딩 중...</div>';
+  try {
+    const data = await apiFetch('/api/algorithm-requests');
+    if (!data.length) {
+      container.innerHTML = '<div class="empty">제출된 요청이 없습니다.</div>';
+      return;
+    }
+    container.innerHTML = '<div class="req-list">' + data.map((r, i) => {
+      const isPending = r.status === '검토중';
+      const actionBtns = isPending ? `
+        <button class="btn btn-approve" onclick="approveReq(${r.id}, event)">✅ 반영</button>
+        <button class="btn btn-reject"  onclick="rejectReq(${r.id}, event)">❌ 반려</button>` : '';
+      return `
+      <div class="req-item" id="req-${r.id}">
+        <div class="req-summary" onclick="toggleReq(${r.id})">
+          <div class="req-meta">
+            <span class="req-date">${fmtDate(r.submitted_at)}</span>
+            <span class="badge" style="background:#252840;color:var(--text)">${escHtml(r.request_type)}</span>
+            <span class="req-name">${escHtml(r.algorithm_name)}</span>
+            <span class="badge badge-${escHtml(r.status)}">${escHtml(r.status)}</span>
+          </div>
+          <span class="req-chevron">▼</span>
+        </div>
+        <div class="req-content">
+          <div class="req-desc">${escHtml(r.description)}</div>
+          ${isPending ? `<div class="req-actions">${actionBtns}</div>` : ''}
+          <div class="req-note" id="note-${r.id}" style="display:none"></div>
+        </div>
+      </div>`;
+    }).join('') + '</div>';
+  } catch(e) {
+    container.innerHTML = `<div class="empty">오류: ${escHtml(e.message)}</div>`;
+  }
+}
+
+function toggleReq(id) {
+  const el = document.getElementById('req-' + id);
+  el.classList.toggle('open');
+}
+
+async function approveReq(id, e) {
+  e.stopPropagation();
+  await _updateReqStatus(id, '반영됨');
+}
+
+async function rejectReq(id, e) {
+  e.stopPropagation();
+  await _updateReqStatus(id, '반려됨');
+}
+
+async function _updateReqStatus(id, status) {
+  const noteEl = document.getElementById('note-' + id);
+  if (noteEl) { noteEl.style.display = 'block'; noteEl.textContent = '처리 중...'; }
+
+  // 승인 시 Claude 해석에 시간이 걸리므로 버튼 비활성화
+  const item = document.getElementById('req-' + id);
+  if (item) item.querySelectorAll('button').forEach(b => b.disabled = true);
+
+  try {
+    const res = await fetch(`/api/algorithm-request/${id}/status`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status }),
+    });
+    const data = await res.json();
+    if (data.ok) {
+      if (noteEl) noteEl.textContent = data.note || '처리 완료';
+      // 배지 업데이트
+      const badge = item?.querySelector('.badge:last-of-type');
+      if (badge) { badge.className = `badge badge-${status}`; badge.textContent = status; }
+      // 버튼 제거
+      const actions = item?.querySelector('.req-actions');
+      if (actions) actions.remove();
+      // 파라미터 새로고침
+      if (status === '반영됨') loadConfigs();
+    } else {
+      if (noteEl) noteEl.textContent = '오류: ' + (data.error || '알 수 없는 오류');
+      if (item) item.querySelectorAll('button').forEach(b => b.disabled = false);
+    }
+  } catch(e) {
+    if (noteEl) noteEl.textContent = '네트워크 오류: ' + e.message;
+    if (item) item.querySelectorAll('button').forEach(b => b.disabled = false);
+  }
+}
+
+async function loadConfigs() {
+  const grid = document.getElementById('cfg-grid');
+  if (!grid) return;
+  grid.innerHTML = '<div class="loading"><span class="spinner"></span>로딩 중...</div>';
+  try {
+    const data = await apiFetch('/api/algorithm-configs');
+    const algoIcon = { '골삼이': '📊', '골든샘플': '🔑', '레드삼각': '📐' };
+    grid.innerHTML = Object.entries(data).map(([algo, params]) => `
+      <div class="cfg-card">
+        <h4>${algoIcon[algo] || ''} ${escHtml(algo)}</h4>
+        ${Object.entries(params).map(([k, v]) =>
+          `<div class="cfg-row"><span class="cfg-key">${escHtml(k)}</span><span class="cfg-val">${v}</span></div>`
+        ).join('')}
+      </div>`).join('');
+  } catch(e) {
+    grid.innerHTML = `<div class="empty">오류: ${escHtml(e.message)}</div>`;
+  }
+}
+
+async function submitRequest() {
+  const msgEl = document.getElementById('form-msg');
+  msgEl.className = 'form-msg';
+
+  const request_type   = document.querySelector('input[name="req_type"]:checked')?.value;
+  const algorithm_name = document.getElementById('req-algo-name').value.trim();
+  const description    = document.getElementById('req-description').value.trim();
+
+  if (!algorithm_name || !description) {
+    msgEl.textContent = '알고리즘 이름과 설명을 모두 입력해주세요.';
+    msgEl.className = 'form-msg err';
+    return;
+  }
+
+  try {
+    const res = await fetch('/api/algorithm-request', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ request_type, algorithm_name, description }),
+    });
+    const data = await res.json();
+    if (data.ok) {
+      msgEl.textContent = '✅ 제출되었습니다. 검토 후 반영 여부를 알려드리겠습니다.';
+      msgEl.className = 'form-msg ok';
+      document.getElementById('req-algo-name').value = '';
+      document.getElementById('req-description').value = '';
+      loadRequests();
+    } else {
+      msgEl.textContent = '❌ ' + (data.error || '오류가 발생했습니다.');
+      msgEl.className = 'form-msg err';
+    }
+  } catch(e) {
+    msgEl.textContent = '❌ 네트워크 오류: ' + e.message;
+    msgEl.className = 'form-msg err';
+  }
+}
+
+function escHtml(str) {
+  return String(str ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+// ── 탭 전환 ──────────────────────────────────────────────────────────
+
+const TAB_NAMES = ['today', 'history', 'tracking', 'algo'];
+const tabLoaded = {};
+
+function switchTab(name) {
+  document.querySelectorAll('.tab-btn').forEach((b, i) => {
+    b.classList.toggle('active', TAB_NAMES[i] === name);
+  });
+  document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+  document.getElementById('tab-' + name).classList.add('active');
+
+  if (!tabLoaded[name]) {
+    tabLoaded[name] = true;
+    if (name === 'today')    loadLatest();
+    if (name === 'history')  loadHistory();
+    if (name === 'tracking') loadTracking();
+    if (name === 'algo')     { loadConfigs(); loadRequests(); }
+  }
+}
+
+// 초기 로드
+loadLatest();
+tabLoaded.today = true;
+</script>
+</body>
+</html>

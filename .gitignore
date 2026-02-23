@@ -1,0 +1,25 @@
+# 환경 변수 / 인증 정보
+.env
+*.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+venv/
+.venv/
+*.egg-info/
+
+# 데이터베이스 / 캐시 / 런타임 파일
+stocks.db
+candidates_cache.json
+sector_cache.json
+watchlist.json
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db

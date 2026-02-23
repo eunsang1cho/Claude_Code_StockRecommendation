@@ -1,0 +1,333 @@
+"""
+database.py
+SQLite 기반 스캔 결과 저장 및 조회
+"""
+
+import json
+import os
+import sqlite3
+from datetime import datetime, timedelta
+
+from data_fetcher import get_market_cap
+
+DIR = os.path.dirname(os.path.abspath(__file__))
+DB_FILE = os.path.join(DIR, "stocks.db")
+
+# ── 알고리즘 기본 파라미터 ────────────────────────────────────────────
+
+_DEFAULT_CONFIGS: dict[str, dict] = {
+    "골삼이": {
+        "window": 25,          # 최근 N일 이내 대양봉 탐색 기간
+        "big_pct": 0.15,       # 대양봉 최소 등락률
+        "vol_mult": 10.0,      # 대양봉 거래량 배수 (20MA 대비)
+        "price_tol": 0.05,     # 대양봉 시가 근접 허용 오차 (±N%)
+        "ma_tol": 0.05,        # 20MA 근접 허용 오차 (±N%)
+        "vol_dec": 0.5,        # 대양봉 이후 거래량 감소 비율 기준
+        "conf_base": 70,       # 기본 신뢰도
+        "conf_near2": 15,      # 시가 2% 이내 신뢰도 가산점
+        "conf_near35": 8,      # 시가 3.5% 이내 신뢰도 가산점
+        "conf_big29": 10,      # 대양봉 +29% 이상 가산점
+        "conf_slope": 7,       # 20MA 기울기 2% 이상 가산점
+    },
+    "골든샘플": {
+        "window": 15,          # 최근 N일 이내 대양봉 탐색 기간
+        "big_pct": 0.15,       # 대양봉 최소 등락률
+        "vol_mult": 10.0,      # 대양봉 거래량 배수
+        "vol_dried": 0.2,      # 거래량 고갈 기준 (대양봉 대비 비율)
+        "price_hold": 0.90,    # 대양봉 이후 종가 유지 기준
+        "min_after": 5,        # 대양봉 이후 최소 경과 일수
+        "conf_base": 80,       # 기본 신뢰도
+        "conf_days10": 8,      # 경과 10일 이상 가산점
+        "conf_big29": 7,       # 대양봉 +29% 이상 가산점
+    },
+    "레드삼각": {
+        "box_start": 90,       # 박스권 탐색 시작 (N일 전)
+        "box_end": 60,         # 박스권 탐색 끝 (N일 전)
+        "box_spread": 0.15,    # 박스권 고저 편차 허용 기준
+        "break_start": 60,     # 돌파 구간 시작 (N일 전)
+        "break_end": 20,       # 돌파 구간 끝 (N일 전)
+        "min_big": 2,          # 돌파 구간 최소 대양봉 수
+        "ma_tol": 0.05,        # 60MA 근접 허용 오차 (±N%)
+        "box_top_pct": 0.93,   # 박스권 상단 대비 현재가 최소 비율
+        "conf_base": 75,       # 기본 신뢰도
+        "conf_3candles": 10,   # 대양봉 3개 이상 가산점
+        "conf_near_ma60": 8,   # 60MA 2% 이내 근접 가산점
+    },
+}
+
+_PARAM_DOCS: dict[str, dict[str, str]] = {
+    "골삼이": {
+        "window":      "최근 N일 이내 대양봉 탐색 기간 (기본: 25)",
+        "big_pct":     "대양봉 최소 등락률 (기본: 0.15 = 15%)",
+        "vol_mult":    "대양봉 거래량 배수, 20MA 대비 (기본: 10.0)",
+        "price_tol":   "대양봉 시가 근접 허용 오차 (기본: 0.05 = ±5%)",
+        "ma_tol":      "20MA 근접 허용 오차 (기본: 0.05 = ±5%)",
+        "vol_dec":     "대양봉 이후 거래량 감소 비율 기준 (기본: 0.5 = 50% 미만)",
+        "conf_base":   "기본 신뢰도 점수 (기본: 70)",
+        "conf_near2":  "시가 2% 이내 근접 시 신뢰도 가산점 (기본: 15)",
+        "conf_near35": "시가 3.5% 이내 근접 시 신뢰도 가산점 (기본: 8)",
+        "conf_big29":  "대양봉 +29% 이상일 때 신뢰도 가산점 (기본: 10)",
+        "conf_slope":  "20MA 기울기 2% 이상일 때 신뢰도 가산점 (기본: 7)",
+    },
+    "골든샘플": {
+        "window":      "최근 N일 이내 대양봉 탐색 기간 (기본: 15)",
+        "big_pct":     "대양봉 최소 등락률 (기본: 0.15 = 15%)",
+        "vol_mult":    "대양봉 거래량 배수, 20MA 대비 (기본: 10.0)",
+        "vol_dried":   "거래량 고갈 기준, 대양봉 대비 비율 (기본: 0.2 = 20% 미만)",
+        "price_hold":  "대양봉 이후 종가 유지 기준 (기본: 0.90 = 90% 이상)",
+        "min_after":   "대양봉 이후 최소 경과 일수 (기본: 5)",
+        "conf_base":   "기본 신뢰도 점수 (기본: 80)",
+        "conf_days10": "경과 10일 이상 시 신뢰도 가산점 (기본: 8)",
+        "conf_big29":  "대양봉 +29% 이상일 때 신뢰도 가산점 (기본: 7)",
+    },
+    "레드삼각": {
+        "box_start":      "박스권 탐색 시작 (N일 전, 기본: 90)",
+        "box_end":        "박스권 탐색 끝 (N일 전, 기본: 60)",
+        "box_spread":     "박스권 고저 편차 허용 기준 (기본: 0.15 = 15% 미만)",
+        "break_start":    "돌파 구간 시작 (N일 전, 기본: 60)",
+        "break_end":      "돌파 구간 끝 (N일 전, 기본: 20)",
+        "min_big":        "돌파 구간 최소 대양봉 수 (기본: 2)",
+        "ma_tol":         "60MA 근접 허용 오차 (기본: 0.05 = ±5%)",
+        "box_top_pct":    "박스권 상단 대비 현재가 최소 비율 (기본: 0.93 = 93%)",
+        "conf_base":      "기본 신뢰도 점수 (기본: 75)",
+        "conf_3candles":  "대양봉 3개 이상일 때 신뢰도 가산점 (기본: 10)",
+        "conf_near_ma60": "60MA 2% 이내 근접 시 신뢰도 가산점 (기본: 8)",
+    },
+}
+
+
+def _connect() -> sqlite3.Connection:
+    conn = sqlite3.connect(DB_FILE)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def init_db() -> None:
+    """테이블 생성 (없으면)"""
+    with _connect() as conn:
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS scan_sessions (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                scanned_at  TEXT NOT NULL,
+                total_candidates INTEGER NOT NULL DEFAULT 0,
+                total_hits  INTEGER NOT NULL DEFAULT 0
+            );
+
+            CREATE TABLE IF NOT EXISTS scan_results (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id   INTEGER NOT NULL REFERENCES scan_sessions(id),
+                scanned_at   TEXT NOT NULL,
+                ticker       TEXT NOT NULL,
+                name         TEXT NOT NULL,
+                pattern      TEXT NOT NULL,
+                conf         INTEGER NOT NULL,
+                current_price INTEGER NOT NULL,
+                ma240        INTEGER NOT NULL,
+                entry_low    INTEGER NOT NULL DEFAULT 0,
+                entry_high   INTEGER NOT NULL DEFAULT 0,
+                stop_loss    INTEGER NOT NULL DEFAULT 0,
+                target_price INTEGER NOT NULL DEFAULT 0,
+                market_cap   INTEGER NOT NULL DEFAULT 0,
+                week52_high  INTEGER NOT NULL DEFAULT 0,
+                week52_low   INTEGER NOT NULL DEFAULT 0
+            );
+
+            CREATE TABLE IF NOT EXISTS algorithm_requests (
+                id             INTEGER PRIMARY KEY AUTOINCREMENT,
+                submitted_at   TEXT NOT NULL,
+                request_type   TEXT NOT NULL,
+                algorithm_name TEXT NOT NULL,
+                description    TEXT NOT NULL,
+                status         TEXT NOT NULL DEFAULT '검토중'
+            );
+
+            CREATE TABLE IF NOT EXISTS algorithm_configs (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                algorithm    TEXT NOT NULL UNIQUE,
+                params       TEXT NOT NULL,
+                updated_at   TEXT NOT NULL,
+                from_request INTEGER
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_results_session ON scan_results(session_id);
+            CREATE INDEX IF NOT EXISTS idx_results_ticker  ON scan_results(ticker);
+            CREATE INDEX IF NOT EXISTS idx_results_scanned ON scan_results(scanned_at);
+        """)
+    print("✅ DB 초기화 완료:", DB_FILE)
+
+
+def save_scan(results: list[dict], total_candidates: int) -> None:
+    """스캔 세션 + 결과 일괄 저장"""
+    now = datetime.now().isoformat(timespec="seconds")
+
+    with _connect() as conn:
+        cur = conn.execute(
+            "INSERT INTO scan_sessions (scanned_at, total_candidates, total_hits) VALUES (?, ?, ?)",
+            (now, total_candidates, len(results)),
+        )
+        session_id = cur.lastrowid
+
+        for r in results:
+            entry = r.get("entry")
+            if entry:
+                entry_low, entry_high = entry[0], entry[1]
+            else:
+                ma20 = r.get("ma20", 0)
+                entry_low = entry_high = ma20
+
+            market_cap = get_market_cap(r["ticker"])
+
+            conn.execute(
+                """INSERT INTO scan_results
+                   (session_id, scanned_at, ticker, name, pattern, conf,
+                    current_price, ma240, entry_low, entry_high,
+                    stop_loss, target_price, market_cap, week52_high, week52_low)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    session_id,
+                    now,
+                    r["ticker"],
+                    r["name"],
+                    r["pattern"],
+                    r["conf"],
+                    r.get("current", 0),
+                    r.get("ma240", 0),
+                    entry_low,
+                    entry_high,
+                    r.get("stop", 0),
+                    r.get("target", 0),
+                    market_cap,
+                    r.get("week52_high", 0),
+                    r.get("week52_low", 0),
+                ),
+            )
+
+    print(f"💾 스캔 저장 완료: session_id={session_id}, {len(results)}건")
+
+
+def get_latest() -> list[dict]:
+    """가장 최근 세션 결과 (신뢰도 내림차순)"""
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT id FROM scan_sessions ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+        if not row:
+            return []
+
+        rows = conn.execute(
+            """SELECT * FROM scan_results
+               WHERE session_id = ?
+               ORDER BY conf DESC""",
+            (row["id"],),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def get_history(days: int = 30) -> list[dict]:
+    """최근 N일 전체 스캔 결과 (최신순)"""
+    since = (datetime.now() - timedelta(days=days)).isoformat(timespec="seconds")
+    with _connect() as conn:
+        rows = conn.execute(
+            """SELECT * FROM scan_results
+               WHERE scanned_at >= ?
+               ORDER BY scanned_at DESC, conf DESC""",
+            (since,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def get_stock_tracking() -> list[dict]:
+    """종목별 감지 횟수 + 최초 감지가 + 최근 신뢰도/패턴 (감지 횟수 내림차순)"""
+    with _connect() as conn:
+        rows = conn.execute(
+            """SELECT
+                   sr.ticker,
+                   sr.name,
+                   COUNT(*)                AS total_hits,
+                   MIN(sr.scanned_at)      AS first_detected,
+                   MAX(sr.scanned_at)      AS last_detected,
+                   (SELECT conf FROM scan_results
+                    WHERE ticker = sr.ticker
+                    ORDER BY scanned_at DESC LIMIT 1) AS last_conf,
+                   (SELECT pattern FROM scan_results
+                    WHERE ticker = sr.ticker
+                    ORDER BY scanned_at DESC LIMIT 1) AS last_pattern,
+                   (SELECT current_price FROM scan_results
+                    WHERE ticker = sr.ticker
+                    ORDER BY scanned_at ASC LIMIT 1)  AS first_price
+               FROM scan_results sr
+               GROUP BY sr.ticker
+               ORDER BY total_hits DESC, last_detected DESC""",
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+# ── 알고리즘 요청 ─────────────────────────────────────────────────────
+
+def save_algorithm_request(request_type: str, algorithm_name: str, description: str) -> int:
+    """알고리즘 정정/신규 요청 저장"""
+    now = datetime.now().isoformat(timespec="seconds")
+    with _connect() as conn:
+        cur = conn.execute(
+            """INSERT INTO algorithm_requests (submitted_at, request_type, algorithm_name, description)
+               VALUES (?, ?, ?, ?)""",
+            (now, request_type, algorithm_name, description),
+        )
+        return cur.lastrowid
+
+
+def get_algorithm_requests() -> list[dict]:
+    """알고리즘 요청 목록 (최신순)"""
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT * FROM algorithm_requests ORDER BY submitted_at DESC"
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def update_request_status(req_id: int, status: str) -> None:
+    """요청 상태 업데이트"""
+    with _connect() as conn:
+        conn.execute(
+            "UPDATE algorithm_requests SET status = ? WHERE id = ?",
+            (status, req_id),
+        )
+
+
+# ── 알고리즘 파라미터 ─────────────────────────────────────────────────
+
+def get_algo_config(algorithm: str) -> dict:
+    """알고리즘 파라미터 조회 (DB 없으면 기본값 반환)"""
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT params FROM algorithm_configs WHERE algorithm = ?",
+            (algorithm,),
+        ).fetchone()
+    if row:
+        stored = json.loads(row["params"])
+        # 기본값에 없는 키 보충 (새 파라미터 추가 시 하위 호환)
+        defaults = _DEFAULT_CONFIGS.get(algorithm, {})
+        return {**defaults, **stored}
+    return dict(_DEFAULT_CONFIGS.get(algorithm, {}))
+
+
+def get_algo_configs_all() -> dict:
+    """세 알고리즘 파라미터 전체 반환"""
+    return {algo: get_algo_config(algo) for algo in _DEFAULT_CONFIGS}
+
+
+def update_algo_config(
+    algorithm: str, params: dict, from_request_id: int | None = None
+) -> None:
+    """알고리즘 파라미터 업데이트 (없으면 삽입, 있으면 덮어쓰기)"""
+    now = datetime.now().isoformat(timespec="seconds")
+    with _connect() as conn:
+        conn.execute(
+            """INSERT INTO algorithm_configs (algorithm, params, updated_at, from_request)
+               VALUES (?, ?, ?, ?)
+               ON CONFLICT(algorithm) DO UPDATE SET
+                 params       = excluded.params,
+                 updated_at   = excluded.updated_at,
+                 from_request = excluded.from_request""",
+            (algorithm, json.dumps(params, ensure_ascii=False), now, from_request_id),
+        )
