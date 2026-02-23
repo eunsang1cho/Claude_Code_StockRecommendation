@@ -167,7 +167,7 @@ def analyze_watchlist(
 def format_news_result(r: dict) -> str:
     """뉴스 분석 결과 텔레그램 포맷"""
     p = r.get("pattern", "")
-    emoji = {"골삼이": "🔵", "골든샘플": "🟢", "레드삼각": "🔴", "골삼이(상승초입)": "🚀"}.get(p, "📌")
+    emoji = {"골삼이": "🔵", "골든샘플": "🟢", "레드삼각": "🔴", "골삼이(상승초입)": "🔺"}.get(p, "📌")
 
     lines = [
         f"{emoji} *{r['name']}* \\({r['ticker']}\\)",
