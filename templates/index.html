@@ -86,9 +86,10 @@ td { padding: 6px 10px; font-size: 13px; vertical-align: middle; }
   display: inline-block; padding: 2px 8px; border-radius: 99px;
   font-size: 11px; font-weight: 600;
 }
-.badge-골삼이  { background: #1e3a5f; color: #7cb8ff; }
-.badge-골든샘플 { background: #1a3d2e; color: #4ade80; }
-.badge-레드삼각 { background: #3d1a1a; color: #f87171; }
+.badge-골삼이   { background: #1e3a5f; color: #7cb8ff; }
+.badge-골든샘플  { background: #1a3d2e; color: #4ade80; }
+.badge-레드삼각  { background: #3d1a1a; color: #f87171; }
+.badge-상승초입  { background: #2a1a3d; color: #c4b5fd; }
 .badge-검토중  { background: #2d2d10; color: #fbbf24; }
 .badge-반영됨  { background: #1a3d2e; color: #4ade80; }
 .badge-반려됨  { background: #3d1a1a; color: #f87171; }
@@ -333,6 +334,36 @@ td { padding: 6px 10px; font-size: 13px; vertical-align: middle; }
         </div>
       </details>
 
+      <details class="algo-card">
+        <summary>
+          <span class="badge badge-상승초입">🚀 골삼이(상승초입)</span>
+          장대양봉 직후 상승 초입 패턴
+          <span class="chevron">▼</span>
+        </summary>
+        <div class="algo-body">
+          <strong>개요</strong><br>
+          장대양봉 발생 <strong>직후 1~5거래일 이내</strong>에 상승 초입 타이밍을 포착하는 패턴입니다.
+          기존 골삼이가 눌림 후 지지를 확인하는 것과 달리, 대양봉 직후 빠른 진입을 노립니다.<br><br>
+          <strong>감지 조건 (4가지 모두 충족)</strong>
+          <ul>
+            <li><strong>① 240MA 방향</strong>: 최근 20거래일 기준 240MA 하락 없을 것 (횡보 ±0.5% 또는 우상향)</li>
+            <li><strong>② 장대양봉</strong>: 최근 5거래일 내 등락률 +5% 이상, 또는 캔들 몸통이 전체 범위의 60% 이상</li>
+            <li><strong>③ 20MA 골든크로스 임박</strong>: 장대양봉 저가와 향후 3~15일 내 예상 20MA 도달가가 ±3% 이내 (현재가 20MA 위 또는 3% 이내)</li>
+            <li><strong>④ 거래량 급증</strong>: 장대양봉일 거래량이 20MA의 3배 이상</li>
+          </ul>
+          <strong>매수존 / 손절</strong><br>
+          <span class="algo-chip">매수존: 20MA × 0.99 ~ 현재가</span>
+          <span class="algo-chip">손절: 장대양봉 저가 × 0.97</span>
+          <span class="algo-chip">목표: 장대양봉 고가 × 1.10</span><br><br>
+          <strong>신뢰도 가산</strong>
+          <ul>
+            <li>캔들 몸통 60% 이상: <strong>+8점</strong></li>
+            <li>거래량 5배 이상: <strong>+8점</strong></li>
+            <li>현재가 20MA ±1.5% 이내: <strong>+10점</strong></li>
+          </ul>
+        </div>
+      </details>
+
     </div>
   </div>
 
@@ -471,9 +502,15 @@ const fmtMcap = n => {
 const fmtDate = iso => iso ? iso.slice(0, 16).replace('T', ' ') : '—';
 
 function badge(p) {
-  const map = { '골삼이': '📊 골삼이', '골든샘플': '🔑 골든샘플', '레드삼각': '📐 레드삼각' };
-  const cls = 'badge-' + p;
-  return `<span class="badge ${cls}">${map[p] || p}</span>`;
+  const map = {
+    '골삼이': '📊 골삼이', '골든샘플': '🔑 골든샘플',
+    '레드삼각': '📐 레드삼각', '골삼이(상승초입)': '🚀 골삼이(상승초입)',
+  };
+  const clsMap = {
+    '골삼이': 'badge-골삼이', '골든샘플': 'badge-골든샘플',
+    '레드삼각': 'badge-레드삼각', '골삼이(상승초입)': 'badge-상승초입',
+  };
+  return `<span class="badge ${clsMap[p] || ''}">${map[p] || escHtml(p)}</span>`;
 }
 
 function confBar(conf) {
@@ -487,7 +524,7 @@ function week52Cell(cur, lo, hi) {
   const pct = Math.max(0, Math.min(100, (cur - lo) / (hi - lo) * 100));
   return `<div class="w52-wrap">
     <div class="w52-bar"><div class="w52-dot" style="left:${pct}%"></div></div>
-    <div class="w52-text">${fmtMcap(lo)} ~ ${fmtMcap(hi)}</div></div>`;
+    <div class="w52-text">${KRW(lo)} ~ ${KRW(hi)}</div></div>`;
 }
 
 function entryZone(r) {
@@ -520,18 +557,21 @@ async function loadLatest() {
     const data = await apiFetch('/api/latest');
     document.getElementById('last-updated').textContent = '마지막 갱신: ' + new Date().toLocaleString('ko-KR');
 
+    const top = data.slice(0, 15); // 신뢰도 상위 15개 (DB가 conf DESC 정렬)
     document.getElementById('stats-row').innerHTML = `
-      <div class="stat-card"><div class="stat-label">감지 종목</div><div class="stat-value">${data.length}</div></div>
-      <div class="stat-card"><div class="stat-label">골삼이</div><div class="stat-value">${data.filter(r=>r.pattern==='골삼이').length}</div></div>
-      <div class="stat-card"><div class="stat-label">골든샘플</div><div class="stat-value">${data.filter(r=>r.pattern==='골든샘플').length}</div></div>
-      <div class="stat-card"><div class="stat-label">레드삼각</div><div class="stat-value">${data.filter(r=>r.pattern==='레드삼각').length}</div></div>
+      <div class="stat-card"><div class="stat-label">전체 감지</div><div class="stat-value">${data.length}</div></div>
+      <div class="stat-card"><div class="stat-label">표시</div><div class="stat-value">${top.length}</div></div>
+      <div class="stat-card"><div class="stat-label">🚀 상승초입</div><div class="stat-value">${data.filter(r=>r.pattern==='골삼이(상승초입)').length}</div></div>
+      <div class="stat-card"><div class="stat-label">📊 골삼이</div><div class="stat-value">${data.filter(r=>r.pattern==='골삼이').length}</div></div>
+      <div class="stat-card"><div class="stat-label">🔑 골든샘플</div><div class="stat-value">${data.filter(r=>r.pattern==='골든샘플').length}</div></div>
+      <div class="stat-card"><div class="stat-label">📐 레드삼각</div><div class="stat-value">${data.filter(r=>r.pattern==='레드삼각').length}</div></div>
     `;
 
-    if (!data.length) {
+    if (!top.length) {
       tbody.innerHTML = '<tr><td colspan="9" class="empty">감지된 패턴이 없습니다.</td></tr>';
       return;
     }
-    tbody.innerHTML = data.map(r => `<tr>
+    tbody.innerHTML = top.map(r => `<tr>
       <td>${badge(r.pattern)}</td>
       <td><strong>${escHtml(r.name)}</strong><br><span style="font-size:11px;color:var(--text-muted)">${escHtml(r.ticker)}</span></td>
       <td>${confBar(r.conf)}</td>
@@ -726,7 +766,7 @@ async function loadConfigs() {
   grid.innerHTML = '<div class="loading"><span class="spinner"></span>로딩 중...</div>';
   try {
     const data = await apiFetch('/api/algorithm-configs');
-    const algoIcon = { '골삼이': '📊', '골든샘플': '🔑', '레드삼각': '📐' };
+    const algoIcon = { '골삼이': '📊', '골든샘플': '🔑', '레드삼각': '📐', '골삼이(상승초입)': '🚀' };
     grid.innerHTML = Object.entries(data).map(([algo, params]) => `
       <div class="cfg-card">
         <h4>${algoIcon[algo] || ''} ${escHtml(algo)}</h4>
