@@ -290,3 +290,19 @@ async def api_update_request_status(req_id: int, request: Request) -> JSONRespon
 @app.get("/api/algorithm-configs")
 def api_algo_configs() -> JSONResponse:
     return JSONResponse(database.get_algo_configs_all())
+
+
+@app.delete("/api/scan-result/{result_id}")
+def api_delete_scan_result(result_id: int) -> JSONResponse:
+    ok = database.delete_scan_result(result_id)
+    if not ok:
+        return JSONResponse({"ok": False, "error": "해당 결과를 찾을 수 없습니다."}, status_code=404)
+    return JSONResponse({"ok": True})
+
+
+@app.delete("/api/stock/{ticker}")
+def api_delete_stock(ticker: str) -> JSONResponse:
+    if not _TICKER_RE.match(ticker):
+        return JSONResponse({"error": "유효하지 않은 종목 코드입니다."}, status_code=400)
+    count = database.delete_stock_all(ticker)
+    return JSONResponse({"ok": True, "deleted": count})

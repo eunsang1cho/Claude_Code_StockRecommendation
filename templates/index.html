@@ -81,6 +81,25 @@ tbody tr:last-child { border-bottom: none; }
 tbody tr:hover { background: var(--surface2); }
 td { padding: 6px 10px; font-size: 13px; vertical-align: middle; }
 
+/* 정렬 가능한 헤더 */
+.th-sort { cursor: pointer; user-select: none; white-space: nowrap; }
+.th-sort:hover { color: var(--text); }
+.th-sort.sorted { color: var(--accent); }
+.sort-ic { margin-left: 3px; font-size: 9px; opacity: .4; }
+.th-sort.sorted .sort-ic { opacity: 1; }
+
+/* 삭제 버튼 */
+.btn-del {
+  background: transparent; color: var(--red); border: 1px solid #5a2a2a;
+  border-radius: var(--radius); padding: 2px 8px; font-size: 11px;
+  cursor: pointer; line-height: 1.6; font-family: var(--font);
+}
+.btn-del:hover { background: #3d1a1a; }
+
+/* 종목명 링크 */
+.stock-link { color: var(--text); text-decoration: none; cursor: pointer; }
+.stock-link:hover { color: var(--accent); text-decoration: underline; }
+
 /* 배지 */
 .badge {
   display: inline-block; padding: 2px 8px; border-radius: 99px;
@@ -375,15 +394,13 @@ td { padding: 6px 10px; font-size: 13px; vertical-align: middle; }
   <div class="stat-row" id="stats-row"></div>
   <div class="table-wrap">
     <table>
-      <thead>
-        <tr>
-          <th>패턴</th><th>종목명</th><th>신뢰도</th>
-          <th>현재가</th><th>목표가</th><th>손절가</th>
-          <th>매수존</th><th>52주 범위</th><th>시가총액</th>
-        </tr>
-      </thead>
+      <thead><tr id="today-thead">
+        <th>패턴</th><th>종목명</th><th>신뢰도</th>
+        <th>현재가</th><th>목표가</th><th>손절가</th>
+        <th>매수존</th><th>52주 범위</th><th>시가총액</th><th>삭제</th>
+      </tr></thead>
       <tbody id="today-body">
-        <tr><td colspan="9" class="loading"><span class="spinner"></span>로딩 중...</td></tr>
+        <tr><td colspan="10" class="loading"><span class="spinner"></span>로딩 중...</td></tr>
       </tbody>
     </table>
   </div>
@@ -404,14 +421,12 @@ td { padding: 6px 10px; font-size: 13px; vertical-align: middle; }
   </div>
   <div class="table-wrap">
     <table>
-      <thead>
-        <tr>
-          <th>날짜</th><th>패턴</th><th>종목명</th><th>신뢰도</th>
-          <th>현재가</th><th>목표가</th><th>손절가</th><th>매수존</th>
-        </tr>
-      </thead>
+      <thead><tr id="history-thead">
+        <th>날짜</th><th>패턴</th><th>종목명</th><th>신뢰도</th>
+        <th>현재가</th><th>목표가</th><th>손절가</th><th>매수존</th><th>삭제</th>
+      </tr></thead>
       <tbody id="history-body">
-        <tr><td colspan="8" class="loading"><span class="spinner"></span>로딩 중...</td></tr>
+        <tr><td colspan="9" class="loading"><span class="spinner"></span>로딩 중...</td></tr>
       </tbody>
     </table>
   </div>
@@ -428,15 +443,13 @@ td { padding: 6px 10px; font-size: 13px; vertical-align: middle; }
   </div>
   <div class="table-wrap">
     <table>
-      <thead>
-        <tr>
-          <th>종목</th><th>최초 감지가</th><th>패턴</th>
-          <th>수익률</th><th>현재가</th>
-          <th>총 감지</th><th>최초 감지일</th><th>마지막 신뢰도</th>
-        </tr>
-      </thead>
+      <thead><tr id="tracking-thead">
+        <th>종목</th><th>최초 감지가</th><th>패턴</th>
+        <th>수익률</th><th>현재가</th>
+        <th>총 감지</th><th>최초 감지일</th><th>마지막 신뢰도</th><th>삭제</th>
+      </tr></thead>
       <tbody id="tracking-body">
-        <tr><td colspan="9" class="loading"><span class="spinner"></span>로딩 중...</td></tr>
+        <tr><td colspan="10" class="loading"><span class="spinner"></span>로딩 중...</td></tr>
       </tbody>
     </table>
   </div>
@@ -543,49 +556,146 @@ function retCell(firstPrice, currentPrice) {
   return `<span class="${cls}">${sign}${pct.toFixed(1)}%</span>`;
 }
 
+function naverLink(ticker, name) {
+  const url = 'https://finance.naver.com/item/main.naver?code=' + ticker;
+  return `<span class="stock-link" onclick="openNaver('${ticker}')" title="네이버 주식 보기">${escHtml(name)}</span>`;
+}
+
+function openNaver(ticker) {
+  window.open('https://finance.naver.com/item/main.naver?code=' + ticker, '_blank');
+}
+
 async function apiFetch(path) {
   const res = await fetch(path);
   if (!res.ok) throw new Error(res.statusText);
   return res.json();
 }
 
+// ── 데이터 저장소 ─────────────────────────────────────────────────────
+let _todayData    = [];
+let _historyData  = [];
+let _trackingData = [];
+let _trackingPrices = {};   // ticker → 현재가
+
+// ── 정렬 상태 ─────────────────────────────────────────────────────────
+let _todaySort   = { col: null, dir: 1 };
+let _historySort = { col: null, dir: 1 };
+let _trackSort   = { col: null, dir: 1 };
+
+// ── 정렬 유틸 ─────────────────────────────────────────────────────────
+function sortData(arr, col, dir) {
+  return [...arr].sort((a, b) => {
+    let va = a[col], vb = b[col];
+    if (va == null) va = '';
+    if (vb == null) vb = '';
+    if (typeof va === 'number' && typeof vb === 'number') return (va - vb) * dir;
+    return String(va).localeCompare(String(vb), 'ko') * dir;
+  });
+}
+
+function mkTh(label, col, state, fnName) {
+  const a = state.col === col;
+  const ic = a ? (state.dir === 1 ? '▲' : '▼') : '⇅';
+  return `<th class="th-sort${a ? ' sorted' : ''}" onclick="${fnName}('${col}')">${label}<span class="sort-ic">${ic}</span></th>`;
+}
+
+function buildTodayThead() {
+  const s = _todaySort;
+  const t = (l, c) => mkTh(l, c, s, 'sortToday');
+  return [
+    t('패턴', 'pattern'), t('종목명', 'name'), t('신뢰도', 'conf'),
+    t('현재가', 'current_price'), t('목표가', 'target_price'), t('손절가', 'stop_loss'),
+    '<th>매수존</th>', '<th>52주 범위</th>', t('시가총액', 'market_cap'), '<th>삭제</th>',
+  ].join('');
+}
+
+function buildHistoryThead() {
+  const s = _historySort;
+  const t = (l, c) => mkTh(l, c, s, 'sortHistory');
+  return [
+    t('날짜', 'scanned_at'), t('패턴', 'pattern'), t('종목명', 'name'), t('신뢰도', 'conf'),
+    t('현재가', 'current_price'), t('목표가', 'target_price'), t('손절가', 'stop_loss'),
+    '<th>매수존</th>', '<th>삭제</th>',
+  ].join('');
+}
+
+function buildTrackingThead() {
+  const s = _trackSort;
+  const t = (l, c) => mkTh(l, c, s, 'sortTrack');
+  return [
+    t('종목', 'name'), t('최초 감지가', 'first_price'), t('패턴', 'last_pattern'),
+    t('수익률', 'return_pct'), t('현재가', 'current_price'),
+    t('총 감지', 'total_hits'), t('최초 감지일', 'first_detected'), t('마지막 신뢰도', 'last_conf'),
+    '<th>삭제</th>',
+  ].join('');
+}
+
+// ── 정렬 핸들러 ───────────────────────────────────────────────────────
+function sortToday(col) {
+  _todaySort.dir = (_todaySort.col === col) ? -_todaySort.dir : 1;
+  _todaySort.col = col;
+  renderToday();
+}
+function sortHistory(col) {
+  _historySort.dir = (_historySort.col === col) ? -_historySort.dir : 1;
+  _historySort.col = col;
+  renderHistory();
+}
+function sortTrack(col) {
+  _trackSort.dir = (_trackSort.col === col) ? -_trackSort.dir : 1;
+  _trackSort.col = col;
+  renderTracking();
+}
+
 // ── 탭1: 오늘 스캔 ───────────────────────────────────────────────────
 
 async function loadLatest() {
   const tbody = document.getElementById('today-body');
-  tbody.innerHTML = '<tr><td colspan="9" class="loading"><span class="spinner"></span>로딩 중...</td></tr>';
+  tbody.innerHTML = '<tr><td colspan="10" class="loading"><span class="spinner"></span>로딩 중...</td></tr>';
   try {
-    const data = await apiFetch('/api/latest');
+    _todayData = await apiFetch('/api/latest');
     document.getElementById('last-updated').textContent = '마지막 갱신: ' + new Date().toLocaleString('ko-KR');
-
-    const top = data.slice(0, 15); // 신뢰도 상위 15개 (DB가 conf DESC 정렬)
-    document.getElementById('stats-row').innerHTML = `
-      <div class="stat-card"><div class="stat-label">전체 감지</div><div class="stat-value">${data.length}</div></div>
-      <div class="stat-card"><div class="stat-label">표시</div><div class="stat-value">${top.length}</div></div>
-      <div class="stat-card"><div class="stat-label">🚀 상승초입</div><div class="stat-value">${data.filter(r=>r.pattern==='골삼이(상승초입)').length}</div></div>
-      <div class="stat-card"><div class="stat-label">📊 골삼이</div><div class="stat-value">${data.filter(r=>r.pattern==='골삼이').length}</div></div>
-      <div class="stat-card"><div class="stat-label">🔑 골든샘플</div><div class="stat-value">${data.filter(r=>r.pattern==='골든샘플').length}</div></div>
-      <div class="stat-card"><div class="stat-label">📐 레드삼각</div><div class="stat-value">${data.filter(r=>r.pattern==='레드삼각').length}</div></div>
-    `;
-
-    if (!top.length) {
-      tbody.innerHTML = '<tr><td colspan="9" class="empty">감지된 패턴이 없습니다.</td></tr>';
-      return;
-    }
-    tbody.innerHTML = top.map(r => `<tr>
-      <td>${badge(r.pattern)}</td>
-      <td><strong>${escHtml(r.name)}</strong><br><span style="font-size:11px;color:var(--text-muted)">${escHtml(r.ticker)}</span></td>
-      <td>${confBar(r.conf)}</td>
-      <td style="font-weight:600">${KRW(r.current_price)}</td>
-      <td style="color:var(--yellow)">${KRW(r.target_price)}</td>
-      <td style="color:var(--red)">${KRW(r.stop_loss)}</td>
-      <td>${entryZone(r)}</td>
-      <td>${week52Cell(r.current_price, r.week52_low, r.week52_high)}</td>
-      <td style="font-size:12px;color:var(--text-muted)">${fmtMcap(r.market_cap)}</td>
-    </tr>`).join('');
+    renderToday();
   } catch(e) {
-    tbody.innerHTML = `<tr><td colspan="9" class="empty">오류: ${escHtml(e.message)}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="10" class="empty">오류: ${escHtml(e.message)}</td></tr>`;
   }
+}
+
+function renderToday() {
+  // 통계 카드 갱신
+  document.getElementById('stats-row').innerHTML = `
+    <div class="stat-card"><div class="stat-label">전체 감지</div><div class="stat-value">${_todayData.length}</div></div>
+    <div class="stat-card"><div class="stat-label">🚀 상승초입</div><div class="stat-value">${_todayData.filter(r=>r.pattern==='골삼이(상승초입)').length}</div></div>
+    <div class="stat-card"><div class="stat-label">📊 골삼이</div><div class="stat-value">${_todayData.filter(r=>r.pattern==='골삼이').length}</div></div>
+    <div class="stat-card"><div class="stat-label">🔑 골든샘플</div><div class="stat-value">${_todayData.filter(r=>r.pattern==='골든샘플').length}</div></div>
+    <div class="stat-card"><div class="stat-label">📐 레드삼각</div><div class="stat-value">${_todayData.filter(r=>r.pattern==='레드삼각').length}</div></div>
+  `;
+
+  // 헤더 갱신 (정렬 아이콘 포함)
+  const thead = document.getElementById('today-thead');
+  if (thead) thead.innerHTML = buildTodayThead();
+
+  const tbody = document.getElementById('today-body');
+  if (!_todayData.length) {
+    tbody.innerHTML = '<tr><td colspan="10" class="empty">감지된 패턴이 없습니다.</td></tr>';
+    return;
+  }
+
+  let sorted = _todayData;
+  if (_todaySort.col) sorted = sortData(_todayData, _todaySort.col, _todaySort.dir);
+
+  tbody.innerHTML = sorted.map(r => `<tr>
+    <td>${badge(r.pattern)}</td>
+    <td><strong>${naverLink(r.ticker, r.name)}</strong><br><span style="font-size:11px;color:var(--text-muted)">${escHtml(r.ticker)}</span></td>
+    <td>${confBar(r.conf)}</td>
+    <td style="font-weight:600">${KRW(r.current_price)}</td>
+    <td style="color:var(--yellow)">${KRW(r.target_price)}</td>
+    <td style="color:var(--red)">${KRW(r.stop_loss)}</td>
+    <td>${entryZone(r)}</td>
+    <td>${week52Cell(r.current_price, r.week52_low, r.week52_high)}</td>
+    <td style="font-size:12px;color:var(--text-muted)">${fmtMcap(r.market_cap)}</td>
+    <td><button class="btn-del" onclick="deleteRow(${r.id})">삭제</button></td>
+  </tr>`).join('');
 }
 
 // ── 탭2: 전체 이력 ───────────────────────────────────────────────────
@@ -593,59 +703,102 @@ async function loadLatest() {
 async function loadHistory() {
   const days = document.getElementById('history-days').value;
   const tbody = document.getElementById('history-body');
-  tbody.innerHTML = '<tr><td colspan="8" class="loading"><span class="spinner"></span>로딩 중...</td></tr>';
-  try {
-    const data = await apiFetch(`/api/history?days=${days}`);
-    if (!data.length) {
-      tbody.innerHTML = '<tr><td colspan="8" class="empty">이력이 없습니다.</td></tr>';
-      return;
-    }
-    tbody.innerHTML = data.map(r => `<tr>
-      <td style="font-size:12px;color:var(--text-muted)">${fmtDate(r.scanned_at)}</td>
-      <td>${badge(r.pattern)}</td>
-      <td><strong>${escHtml(r.name)}</strong><br><span style="font-size:11px;color:var(--text-muted)">${escHtml(r.ticker)}</span></td>
-      <td>${confBar(r.conf)}</td>
-      <td style="font-weight:600">${KRW(r.current_price)}</td>
-      <td style="color:var(--yellow)">${KRW(r.target_price)}</td>
-      <td style="color:var(--red)">${KRW(r.stop_loss)}</td>
-      <td>${entryZone(r)}</td>
-    </tr>`).join('');
-  } catch(e) {
-    tbody.innerHTML = `<tr><td colspan="8" class="empty">오류: ${escHtml(e.message)}</td></tr>`;
-  }
-}
-
-// ── 탭3: 종목별 추적 ─────────────────────────────────────────────────
-
-let _trackingData = [];
-
-async function loadTracking() {
-  const tbody = document.getElementById('tracking-body');
   tbody.innerHTML = '<tr><td colspan="9" class="loading"><span class="spinner"></span>로딩 중...</td></tr>';
   try {
-    _trackingData = await apiFetch('/api/stocks');
-    renderTracking();
+    _historyData = await apiFetch(`/api/history?days=${days}`);
+    renderHistory();
   } catch(e) {
     tbody.innerHTML = `<tr><td colspan="9" class="empty">오류: ${escHtml(e.message)}</td></tr>`;
   }
 }
 
-function renderTracking() {
-  const tbody = document.getElementById('tracking-body');
-  if (!_trackingData.length) {
-    tbody.innerHTML = '<tr><td colspan="9" class="empty">추적 중인 종목이 없습니다.</td></tr>';
+function renderHistory() {
+  const thead = document.getElementById('history-thead');
+  if (thead) thead.innerHTML = buildHistoryThead();
+
+  const tbody = document.getElementById('history-body');
+  if (!_historyData.length) {
+    tbody.innerHTML = '<tr><td colspan="9" class="empty">이력이 없습니다.</td></tr>';
     return;
   }
-  tbody.innerHTML = _trackingData.map(r => `<tr id="tr-${escHtml(r.ticker)}">
-    <td><strong>${escHtml(r.name)}</strong><br><span style="font-size:11px;color:var(--text-muted)">${escHtml(r.ticker)}</span></td>
-    <td>${KRW(r.first_price)}</td>
-    <td>${badge(r.last_pattern)}</td>
-    <td id="ret-${r.ticker}">—</td>
-    <td id="cur-${r.ticker}"><span class="spinner-inline"></span></td>
-    <td style="text-align:center;font-weight:700;color:var(--accent)">${r.total_hits}회</td>
-    <td style="font-size:12px;color:var(--text-muted)">${fmtDate(r.first_detected)}</td>
-    <td>${confBar(r.last_conf)}</td>
+
+  let sorted = _historyData;
+  if (_historySort.col) sorted = sortData(_historyData, _historySort.col, _historySort.dir);
+
+  tbody.innerHTML = sorted.map(r => `<tr>
+    <td style="font-size:12px;color:var(--text-muted)">${fmtDate(r.scanned_at)}</td>
+    <td>${badge(r.pattern)}</td>
+    <td><strong>${naverLink(r.ticker, r.name)}</strong><br><span style="font-size:11px;color:var(--text-muted)">${escHtml(r.ticker)}</span></td>
+    <td>${confBar(r.conf)}</td>
+    <td style="font-weight:600">${KRW(r.current_price)}</td>
+    <td style="color:var(--yellow)">${KRW(r.target_price)}</td>
+    <td style="color:var(--red)">${KRW(r.stop_loss)}</td>
+    <td>${entryZone(r)}</td>
+    <td><button class="btn-del" onclick="deleteRow(${r.id})">삭제</button></td>
   </tr>`).join('');
+}
+
+// ── 탭3: 종목별 추적 ─────────────────────────────────────────────────
+
+async function loadTracking() {
+  const tbody = document.getElementById('tracking-body');
+  tbody.innerHTML = '<tr><td colspan="10" class="loading"><span class="spinner"></span>로딩 중...</td></tr>';
+  try {
+    _trackingData = await apiFetch('/api/stocks');
+    _trackingPrices = {};
+    renderTracking();
+  } catch(e) {
+    tbody.innerHTML = `<tr><td colspan="10" class="empty">오류: ${escHtml(e.message)}</td></tr>`;
+  }
+}
+
+function renderTracking() {
+  const thead = document.getElementById('tracking-thead');
+  if (thead) thead.innerHTML = buildTrackingThead();
+
+  const tbody = document.getElementById('tracking-body');
+  if (!_trackingData.length) {
+    tbody.innerHTML = '<tr><td colspan="10" class="empty">추적 중인 종목이 없습니다.</td></tr>';
+    return;
+  }
+
+  let sorted = _trackingData;
+  if (_trackSort.col) {
+    if (_trackSort.col === 'return_pct') {
+      sorted = [..._trackingData].sort((a, b) => {
+        const pa = _trackingPrices[a.ticker] || 0;
+        const pb = _trackingPrices[b.ticker] || 0;
+        const ra = a.first_price && pa ? (pa - a.first_price) / a.first_price : -999;
+        const rb = b.first_price && pb ? (pb - b.first_price) / b.first_price : -999;
+        return (ra - rb) * _trackSort.dir;
+      });
+    } else if (_trackSort.col === 'current_price') {
+      sorted = [..._trackingData].sort((a, b) => {
+        const pa = _trackingPrices[a.ticker] || 0;
+        const pb = _trackingPrices[b.ticker] || 0;
+        return (pa - pb) * _trackSort.dir;
+      });
+    } else {
+      sorted = sortData(_trackingData, _trackSort.col, _trackSort.dir);
+    }
+  }
+
+  tbody.innerHTML = sorted.map(r => {
+    const cp = _trackingPrices[r.ticker];
+    const curCell = cp ? KRW(cp) : '<span class="spinner-inline"></span>';
+    const retHtml = cp ? retCell(r.first_price, cp) : '—';
+    return `<tr id="tr-${escHtml(r.ticker)}">
+      <td><strong>${naverLink(r.ticker, r.name)}</strong><br><span style="font-size:11px;color:var(--text-muted)">${escHtml(r.ticker)}</span></td>
+      <td>${KRW(r.first_price)}</td>
+      <td>${badge(r.last_pattern)}</td>
+      <td id="ret-${escHtml(r.ticker)}">${retHtml}</td>
+      <td id="cur-${escHtml(r.ticker)}">${curCell}</td>
+      <td style="text-align:center;font-weight:700;color:var(--accent)">${r.total_hits}회</td>
+      <td style="font-size:12px;color:var(--text-muted)">${fmtDate(r.first_detected)}</td>
+      <td>${confBar(r.last_conf)}</td>
+      <td><button class="btn-del" onclick="deleteStock('${escHtml(r.ticker)}')">삭제</button></td>
+    </tr>`;
+  }).join('');
 }
 
 async function fetchAllPrices() {
@@ -656,20 +809,62 @@ async function fetchAllPrices() {
 
   for (const r of _trackingData) {
     try {
-      const res = await apiFetch(`/api/price/${r.ticker}`);
+      const data = await apiFetch(`/api/price/${r.ticker}`);
+      _trackingPrices[r.ticker] = data.price;
       const curEl = document.getElementById(`cur-${r.ticker}`);
       const retEl = document.getElementById(`ret-${r.ticker}`);
-      if (curEl) curEl.textContent = KRW(res.price);
-      if (retEl) retEl.innerHTML = retCell(r.first_price, res.price);
+      if (curEl) curEl.textContent = KRW(data.price);
+      if (retEl) retEl.innerHTML = retCell(r.first_price, data.price);
     } catch(e) {
       const curEl = document.getElementById(`cur-${r.ticker}`);
       if (curEl) curEl.textContent = '오류';
     }
-    await new Promise(res => setTimeout(res, 200)); // 요청 간격
+    await new Promise(resolve => setTimeout(resolve, 200));
   }
 
   btn.disabled = false;
   btn.textContent = '📡 현재가 불러오기';
+}
+
+// ── 삭제 ─────────────────────────────────────────────────────────────
+
+async function deleteRow(id) {
+  if (!confirm('이 스캔 이력을 삭제하시겠습니까?')) return;
+  try {
+    const res = await fetch(`/api/scan-result/${id}`, { method: 'DELETE' });
+    const data = await res.json();
+    if (data.ok) {
+      _todayData   = _todayData.filter(r => r.id !== id);
+      _historyData = _historyData.filter(r => r.id !== id);
+      if (tabLoaded.today)   renderToday();
+      if (tabLoaded.history) renderHistory();
+    } else {
+      alert('삭제 실패: ' + (data.error || '알 수 없는 오류'));
+    }
+  } catch(e) {
+    alert('오류: ' + e.message);
+  }
+}
+
+async function deleteStock(ticker) {
+  if (!confirm(`[${ticker}] 종목의 모든 스캔 이력을 삭제하시겠습니까?\n(오늘스캔, 전체이력에서도 제거됩니다)`)) return;
+  try {
+    const res = await fetch(`/api/stock/${encodeURIComponent(ticker)}`, { method: 'DELETE' });
+    const data = await res.json();
+    if (data.ok) {
+      _trackingData = _trackingData.filter(r => r.ticker !== ticker);
+      delete _trackingPrices[ticker];
+      _todayData   = _todayData.filter(r => r.ticker !== ticker);
+      _historyData = _historyData.filter(r => r.ticker !== ticker);
+      renderTracking();
+      if (tabLoaded.today)   renderToday();
+      if (tabLoaded.history) renderHistory();
+    } else {
+      alert('삭제 실패: ' + (data.error || '알 수 없는 오류'));
+    }
+  } catch(e) {
+    alert('오류: ' + e.message);
+  }
 }
 
 // ── 탭4: 알고리즘 요청 ───────────────────────────────────────────────
@@ -730,7 +925,6 @@ async function _updateReqStatus(id, status) {
   const noteEl = document.getElementById('note-' + id);
   if (noteEl) { noteEl.style.display = 'block'; noteEl.textContent = '처리 중...'; }
 
-  // 승인 시 Claude 해석에 시간이 걸리므로 버튼 비활성화
   const item = document.getElementById('req-' + id);
   if (item) item.querySelectorAll('button').forEach(b => b.disabled = true);
 
@@ -743,13 +937,10 @@ async function _updateReqStatus(id, status) {
     const data = await res.json();
     if (data.ok) {
       if (noteEl) noteEl.textContent = data.note || '처리 완료';
-      // 배지 업데이트
-      const badge = item?.querySelector('.badge:last-of-type');
-      if (badge) { badge.className = `badge badge-${status}`; badge.textContent = status; }
-      // 버튼 제거
+      const bdg = item?.querySelector('.badge:last-of-type');
+      if (bdg) { bdg.className = `badge badge-${status}`; bdg.textContent = status; }
       const actions = item?.querySelector('.req-actions');
       if (actions) actions.remove();
-      // 파라미터 새로고침
       if (status === '반영됨') loadConfigs();
     } else {
       if (noteEl) noteEl.textContent = '오류: ' + (data.error || '알 수 없는 오류');

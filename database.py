@@ -346,6 +346,20 @@ def get_algo_configs_all() -> dict:
     return {algo: get_algo_config(algo) for algo in _DEFAULT_CONFIGS}
 
 
+def delete_scan_result(result_id: int) -> bool:
+    """스캔 결과 단건 삭제. 삭제된 경우 True 반환."""
+    with _connect() as conn:
+        cur = conn.execute("DELETE FROM scan_results WHERE id = ?", (result_id,))
+        return cur.rowcount > 0
+
+
+def delete_stock_all(ticker: str) -> int:
+    """특정 종목의 모든 스캔 결과 삭제. 삭제 건수 반환."""
+    with _connect() as conn:
+        cur = conn.execute("DELETE FROM scan_results WHERE ticker = ?", (ticker,))
+        return cur.rowcount
+
+
 def update_algo_config(
     algorithm: str, params: dict, from_request_id: int | None = None
 ) -> None:
