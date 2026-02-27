@@ -258,6 +258,7 @@ async def cmd_dashboard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         )
 
 
+
 @authorized
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     text = update.message.text or ""
@@ -302,14 +303,16 @@ async def post_init(app: Application) -> None:
         try:
             from pyngrok import ngrok, conf
             conf.get_default().auth_token = NGROK_TOKEN
+
             tunnel = ngrok.connect(8080, "http")
             dashboard_url = tunnel.public_url
             app.bot_data["dashboard_url"] = dashboard_url
-            print(f"🔗 ngrok URL: {dashboard_url}")
+            print(f"🔗 ngrok 대시보드: {dashboard_url}")
+
             await app.bot.send_message(
-                chat_id=USER_ID,
-                text=f"📊 대시보드가 열렸습니다:\n{dashboard_url}",
-            )
+                    chat_id=USER_ID,
+                    text=f"📊 대시보드가 열렸습니다:\n{dashboard_url}",
+                )
         except Exception as e:
             print(f"⚠️ ngrok 시작 실패: {e}")
     else:

@@ -300,6 +300,29 @@ def api_delete_scan_result(result_id: int) -> JSONResponse:
     return JSONResponse({"ok": True})
 
 
+@app.get("/api/price-snapshots")
+def api_get_price_snapshots() -> JSONResponse:
+    return JSONResponse(database.get_price_snapshots())
+
+
+@app.post("/api/price-snapshots")
+async def api_save_price_snapshots(request: Request) -> JSONResponse:
+    try:
+        data = await request.json()
+    except Exception:
+        return JSONResponse({"ok": False, "error": "잘못된 형식"}, status_code=400)
+    if not isinstance(data, dict):
+        return JSONResponse({"ok": False, "error": "dict 형식 필요"}, status_code=400)
+    prices: dict[str, int] = {}
+    for ticker, price in data.items():
+        if _TICKER_RE.match(str(ticker)) and isinstance(price, (int, float)) and price > 0:
+            prices[str(ticker)] = int(price)
+    if not prices:
+        return JSONResponse({"ok": False, "error": "유효한 데이터 없음"}, status_code=400)
+    database.save_price_snapshots(prices)
+    return JSONResponse({"ok": True, "saved": len(prices)})
+
+
 @app.delete("/api/stock/{ticker}")
 def api_delete_stock(ticker: str) -> JSONResponse:
     if not _TICKER_RE.match(ticker):

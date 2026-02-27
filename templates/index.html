@@ -38,6 +38,26 @@ header h1 { font-size: 17px; font-weight: 600; color: var(--accent); }
 .tab-panel { display: none; padding: 14px 20px; }
 .tab-panel.active { display: block; }
 
+/* 내부 서브탭 */
+.subtab-bar {
+  display: flex; gap: 6px; flex-wrap: wrap;
+  margin-bottom: 12px; padding-bottom: 10px;
+  border-bottom: 1px solid var(--border);
+}
+.subtab-btn {
+  padding: 5px 13px; border: 1px solid var(--border);
+  border-radius: 20px; background: var(--surface2);
+  color: var(--text-muted); cursor: pointer; font-size: 12px;
+  font-family: var(--font); transition: all .15s; white-space: nowrap;
+}
+.subtab-btn:hover { color: var(--text); border-color: var(--accent); }
+.subtab-btn.active {
+  background: var(--accent); color: #fff;
+  border-color: var(--accent); font-weight: 600;
+}
+.subtab-panel { display: none; }
+.subtab-panel.active { display: block; }
+
 .panel-header {
   display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px;
 }
@@ -109,7 +129,37 @@ td { padding: 6px 10px; font-size: 13px; vertical-align: middle; }
 .badge-골든샘플  { background: #1a3d2e; color: #4ade80; }
 .badge-레드삼각  { background: #3d1a1a; color: #f87171; }
 .badge-상승초입  { background: #2a1a3d; color: #c4b5fd; }
+.badge-MA압축지지 { background: #1a2d2d; color: #34d399; }
 .badge-검토중  { background: #2d2d10; color: #fbbf24; }
+
+/* 가상 포트폴리오 요약 */
+.pf-wrap { margin-bottom: 12px; }
+.pf-main-card {
+  background: var(--surface); border: 1px solid var(--accent);
+  border-radius: var(--radius); padding: 14px 18px; margin-bottom: 8px;
+}
+.pf-main-label { font-size: 11px; color: var(--text-muted); margin-bottom: 10px; letter-spacing: .04em; }
+.pf-main-row { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+.pf-main-block { display: flex; flex-direction: column; gap: 2px; }
+.pf-block-label { font-size: 11px; color: var(--text-muted); }
+.pf-block-val { font-size: 20px; font-weight: 700; color: var(--text); }
+.pf-arrow { font-size: 18px; color: var(--text-muted); }
+.pf-divider { width: 1px; height: 40px; background: var(--border); }
+.pf-main-gain { display: flex; flex-direction: column; gap: 2px; margin-left: auto; text-align: right; }
+.pf-gain-pct { font-size: 26px; font-weight: 800; }
+.pf-gain-abs { font-size: 12px; color: var(--text-muted); }
+.pf-pos { color: var(--green); }
+.pf-neg { color: var(--red); }
+.pf-zero { color: var(--text-muted); }
+.pf-pat-row { display: flex; gap: 8px; flex-wrap: wrap; }
+.pf-pat-card {
+  background: var(--surface2); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 8px 14px; min-width: 130px;
+}
+.pf-pat-label { font-size: 12px; color: var(--text-muted); margin-bottom: 4px; }
+.pf-pat-count { font-size: 10px; color: var(--text-muted); margin-left: 4px; }
+.pf-pat-pct { font-size: 18px; font-weight: 700; margin-bottom: 2px; }
+.pf-pat-val { font-size: 10px; color: var(--text-muted); }
 .badge-반영됨  { background: #1a3d2e; color: #4ade80; }
 .badge-반려됨  { background: #3d1a1a; color: #f87171; }
 
@@ -192,14 +242,24 @@ td { padding: 6px 10px; font-size: 13px; vertical-align: middle; }
 
 /* 현재 파라미터 패널 */
 .cfg-section { margin-bottom: 16px; }
-.cfg-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 8px; }
+.cfg-grid { display: flex; flex-direction: column; gap: 6px; }
 .cfg-card {
   background: var(--surface); border: 1px solid var(--border);
-  border-radius: var(--radius); padding: 12px 14px;
+  border-radius: var(--radius); overflow: hidden;
 }
-.cfg-card h4 { font-size: 13px; font-weight: 600; margin-bottom: 8px; }
+.cfg-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 14px; cursor: pointer; user-select: none;
+  transition: background .12s;
+}
+.cfg-header:hover { background: var(--surface2); }
+.cfg-header h4 { font-size: 13px; font-weight: 600; }
+.cfg-chevron { font-size: 11px; color: var(--text-muted); transition: transform .2s; }
+.cfg-card.open .cfg-chevron { transform: rotate(180deg); }
+.cfg-params { display: none; padding: 0 14px 10px; border-top: 1px solid var(--border); }
+.cfg-card.open .cfg-params { display: block; }
 .cfg-row { display: flex; justify-content: space-between; align-items: center;
-  padding: 3px 0; border-bottom: 1px solid var(--border); font-size: 12px; }
+  padding: 4px 0; border-bottom: 1px solid var(--border); font-size: 12px; }
 .cfg-row:last-child { border-bottom: none; }
 .cfg-key { color: var(--text-muted); }
 .cfg-val { color: var(--accent); font-weight: 600; font-family: monospace; }
@@ -255,6 +315,7 @@ td { padding: 6px 10px; font-size: 13px; vertical-align: middle; }
   <button class="tab-btn active" onclick="switchTab('today')">오늘 스캔</button>
   <button class="tab-btn" onclick="switchTab('history')">전체 이력</button>
   <button class="tab-btn" onclick="switchTab('tracking')">종목별 추적</button>
+  <button class="tab-btn" onclick="switchTab('algotrack')">알고리즘별 추적</button>
   <button class="tab-btn" onclick="switchTab('algo')">알고리즘 요청</button>
 </div>
 
@@ -439,8 +500,10 @@ td { padding: 6px 10px; font-size: 13px; vertical-align: middle; }
     <div class="controls">
       <button class="btn" id="btn-fetch-prices" onclick="fetchAllPrices()">📡 현재가 불러오기</button>
       <button class="btn" onclick="loadTracking()">↻ 새로고침</button>
+      <span id="price-ts-tracking" style="font-size:11px;color:var(--text-muted)"></span>
     </div>
   </div>
+  <div id="portfolio-summary" style="display:none"></div>
   <div class="table-wrap">
     <table>
       <thead><tr id="tracking-thead">
@@ -455,7 +518,21 @@ td { padding: 6px 10px; font-size: 13px; vertical-align: middle; }
   </div>
 </div>
 
-<!-- ────────────── 탭4: 알고리즘 요청 ────────────── -->
+<!-- ────────────── 탭4: 알고리즘별 추적 ────────────── -->
+<div class="tab-panel" id="tab-algotrack">
+  <div class="panel-header">
+    <h2>알고리즘별 추적</h2>
+    <div class="controls">
+      <button class="btn" id="btn-fetch-prices-algo" onclick="fetchAllPricesAlgo()">📡 현재가 불러오기</button>
+      <button class="btn" onclick="loadAlgoTracking()">↻ 새로고침</button>
+      <span id="price-ts-algo" style="font-size:11px;color:var(--text-muted)"></span>
+    </div>
+  </div>
+  <div id="algotrack-portfolio" style="display:none"></div>
+  <div id="algotrack-body"></div>
+</div>
+
+<!-- ────────────── 탭5: 알고리즘 요청 ────────────── -->
 <div class="tab-panel" id="tab-algo">
 
   <div class="form-card">
@@ -519,10 +596,12 @@ function badge(p) {
   const map = {
     '골삼이': '📊 골삼이', '골든샘플': '🔑 골든샘플',
     '레드삼각': '📐 레드삼각', '골삼이(상승초입)': '🚀 골삼이(상승초입)',
+    'MA압축지지': '📦 MA압축지지',
   };
   const clsMap = {
     '골삼이': 'badge-골삼이', '골든샘플': 'badge-골든샘플',
     '레드삼각': 'badge-레드삼각', '골삼이(상승초입)': 'badge-상승초입',
+    'MA압축지지': 'badge-MA압축지지',
   };
   return `<span class="badge ${clsMap[p] || ''}">${map[p] || escHtml(p)}</span>`;
 }
@@ -557,12 +636,11 @@ function retCell(firstPrice, currentPrice) {
 }
 
 function naverLink(ticker, name) {
-  const url = 'https://finance.naver.com/item/main.naver?code=' + ticker;
   return `<span class="stock-link" onclick="openNaver('${ticker}')" title="네이버 주식 보기">${escHtml(name)}</span>`;
 }
 
 function openNaver(ticker) {
-  window.open('https://finance.naver.com/item/main.naver?code=' + ticker, '_blank');
+  window.open('https://stock.naver.com/domestic/stock/' + ticker + '/price', '_blank');
 }
 
 async function apiFetch(path) {
@@ -576,11 +654,13 @@ let _todayData    = [];
 let _historyData  = [];
 let _trackingData = [];
 let _trackingPrices = {};   // ticker → 현재가
+let _savedPrices    = {};   // ticker → {price, fetched_at} (DB 저장값)
 
 // ── 정렬 상태 ─────────────────────────────────────────────────────────
 let _todaySort   = { col: null, dir: 1 };
 let _historySort = { col: null, dir: 1 };
-let _trackSort   = { col: null, dir: 1 };
+let _trackSort     = { col: null, dir: 1 };
+let _algoTrackSort = { col: null, dir: 1 };
 
 // ── 정렬 유틸 ─────────────────────────────────────────────────────────
 function sortData(arr, col, dir) {
@@ -623,8 +703,8 @@ function buildTrackingThead() {
   const s = _trackSort;
   const t = (l, c) => mkTh(l, c, s, 'sortTrack');
   return [
-    t('종목', 'name'), t('최초 감지가', 'first_price'), t('패턴', 'last_pattern'),
-    t('수익률', 'return_pct'), t('현재가', 'current_price'),
+    t('종목', 'name'), t('최초 감지가', 'first_price'),
+    t('수익률', 'return_pct'), t('패턴', 'last_pattern'), t('현재가', 'current_price'),
     t('총 감지', 'total_hits'), t('최초 감지일', 'first_detected'), t('마지막 신뢰도', 'last_conf'),
     '<th>삭제</th>',
   ].join('');
@@ -647,6 +727,27 @@ function sortTrack(col) {
   renderTracking();
 }
 
+function buildAlgoTrackThead() {
+  const s = _algoTrackSort;
+  const t = (l, c) => mkTh(l, c, s, 'sortAlgoTrack');
+  return [
+    t('종목', 'name'), t('최초 감지가', 'first_price'),
+    t('수익률', 'return_pct'), t('현재가', 'current_price'),
+    t('최초 감지일', 'first_detected'), t('신뢰도', 'last_conf'),
+  ].join('');
+}
+
+function sortAlgoTrack(col) {
+  // 현재 활성 서브탭 인덱스 보존
+  const body = document.getElementById('algotrack-body');
+  let activeIdx = 0;
+  if (body) body.querySelectorAll('.subtab-panel').forEach((p, i) => { if (p.classList.contains('active')) activeIdx = i; });
+  _algoTrackSort.dir = (_algoTrackSort.col === col) ? -_algoTrackSort.dir : 1;
+  _algoTrackSort.col = col;
+  renderAlgoTracking();
+  switchAlgoTab(activeIdx);
+}
+
 // ── 탭1: 오늘 스캔 ───────────────────────────────────────────────────
 
 async function loadLatest() {
@@ -666,6 +767,7 @@ function renderToday() {
   document.getElementById('stats-row').innerHTML = `
     <div class="stat-card"><div class="stat-label">전체 감지</div><div class="stat-value">${_todayData.length}</div></div>
     <div class="stat-card"><div class="stat-label">🚀 상승초입</div><div class="stat-value">${_todayData.filter(r=>r.pattern==='골삼이(상승초입)').length}</div></div>
+    <div class="stat-card"><div class="stat-label">📦 MA압축지지</div><div class="stat-value">${_todayData.filter(r=>r.pattern==='MA압축지지').length}</div></div>
     <div class="stat-card"><div class="stat-label">📊 골삼이</div><div class="stat-value">${_todayData.filter(r=>r.pattern==='골삼이').length}</div></div>
     <div class="stat-card"><div class="stat-label">🔑 골든샘플</div><div class="stat-value">${_todayData.filter(r=>r.pattern==='골든샘플').length}</div></div>
     <div class="stat-card"><div class="stat-label">📐 레드삼각</div><div class="stat-value">${_todayData.filter(r=>r.pattern==='레드삼각').length}</div></div>
@@ -738,6 +840,46 @@ function renderHistory() {
   </tr>`).join('');
 }
 
+// ── 현재가 저장/로드 헬퍼 ────────────────────────────────────────────
+
+async function initSavedPrices() {
+  try {
+    _savedPrices = await apiFetch('/api/price-snapshots');
+    // tracking / algotrack 전역에 미리 반영
+    for (const [ticker, info] of Object.entries(_savedPrices)) {
+      _trackingPrices[ticker]  = info.price;
+      _algoTrackPrices[ticker] = info.price;
+    }
+  } catch(e) { /* 저장값 없어도 무방 */ }
+}
+
+async function _savePricesToServer(pricesMap) {
+  if (!Object.keys(pricesMap).length) return;
+  try {
+    await fetch('/api/price-snapshots', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(pricesMap),
+    });
+    // 로컬 _savedPrices 동기화
+    const now = new Date().toISOString().slice(0, 19);
+    for (const [ticker, price] of Object.entries(pricesMap)) {
+      _savedPrices[ticker] = { price, fetched_at: now };
+    }
+  } catch(e) { /* ignore */ }
+}
+
+function _showPriceTs(elId) {
+  const el = document.getElementById(elId);
+  if (!el) return;
+  const times = Object.values(_savedPrices).map(v => v.fetched_at).filter(Boolean);
+  if (!times.length) { el.textContent = ''; return; }
+  const latest = times.sort().at(-1);
+  const d = new Date(latest);
+  const fmt = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+  el.textContent = `📅 ${fmt} 기준`;
+}
+
 // ── 탭3: 종목별 추적 ─────────────────────────────────────────────────
 
 async function loadTracking() {
@@ -745,8 +887,15 @@ async function loadTracking() {
   tbody.innerHTML = '<tr><td colspan="10" class="loading"><span class="spinner"></span>로딩 중...</td></tr>';
   try {
     _trackingData = await apiFetch('/api/stocks');
-    _trackingPrices = {};
+    // 저장된 현재가 적용 (없는 것만)
+    for (const [ticker, info] of Object.entries(_savedPrices)) {
+      if (!_trackingPrices[ticker]) _trackingPrices[ticker] = info.price;
+    }
     renderTracking();
+    if (Object.keys(_trackingPrices).length) {
+      renderPortfolioSummary();
+      _showPriceTs('price-ts-tracking');
+    }
   } catch(e) {
     tbody.innerHTML = `<tr><td colspan="10" class="empty">오류: ${escHtml(e.message)}</td></tr>`;
   }
@@ -790,8 +939,8 @@ function renderTracking() {
     return `<tr id="tr-${escHtml(r.ticker)}">
       <td><strong>${naverLink(r.ticker, r.name)}</strong><br><span style="font-size:11px;color:var(--text-muted)">${escHtml(r.ticker)}</span></td>
       <td>${KRW(r.first_price)}</td>
-      <td>${badge(r.last_pattern)}</td>
       <td id="ret-${escHtml(r.ticker)}">${retHtml}</td>
+      <td>${badge(r.last_pattern)}</td>
       <td id="cur-${escHtml(r.ticker)}">${curCell}</td>
       <td style="text-align:center;font-weight:700;color:var(--accent)">${r.total_hits}회</td>
       <td style="font-size:12px;color:var(--text-muted)">${fmtDate(r.first_detected)}</td>
@@ -824,6 +973,76 @@ async function fetchAllPrices() {
 
   btn.disabled = false;
   btn.textContent = '📡 현재가 불러오기';
+  renderPortfolioSummary();
+  _showPriceTs('price-ts-tracking');
+  await _savePricesToServer(_trackingPrices);
+}
+
+function renderPortfolioSummary() {
+  const INVEST = 1_000_000;
+  const el = document.getElementById('portfolio-summary');
+  if (!el) return;
+
+  const stocks = _trackingData.filter(r => r.first_price && _trackingPrices[r.ticker]);
+  if (!stocks.length) { el.style.display = 'none'; return; }
+
+  let totalInvested = 0, totalCurrent = 0;
+  const byPattern = {};
+  const patternIcons = { '골삼이':'📊','골든샘플':'🔑','레드삼각':'📐','골삼이(상승초입)':'🚀','MA압축지지':'📦' };
+
+  for (const r of stocks) {
+    const cp = _trackingPrices[r.ticker];
+    const curVal = (INVEST / r.first_price) * cp;
+    totalInvested += INVEST;
+    totalCurrent  += curVal;
+    const pat = r.last_pattern || '기타';
+    if (!byPattern[pat]) byPattern[pat] = { invested: 0, current: 0, count: 0 };
+    byPattern[pat].invested += INVEST;
+    byPattern[pat].current  += curVal;
+    byPattern[pat].count++;
+  }
+
+  const totalGain = totalCurrent - totalInvested;
+  const totalPct  = totalGain / totalInvested * 100;
+  const gainCls   = totalGain > 0 ? 'pf-pos' : totalGain < 0 ? 'pf-neg' : 'pf-zero';
+  const gainSign  = totalGain >= 0 ? '+' : '';
+
+  const patCards = Object.entries(byPattern).map(([pat, d]) => {
+    const g = d.current - d.invested;
+    const p = g / d.invested * 100;
+    const cls  = g > 0 ? 'pf-pos' : g < 0 ? 'pf-neg' : 'pf-zero';
+    const sign = g >= 0 ? '+' : '';
+    const icon = patternIcons[pat] || '⚪';
+    return `<div class="pf-pat-card">
+      <div class="pf-pat-label">${icon} ${escHtml(pat)} <span class="pf-pat-count">${d.count}종목</span></div>
+      <div class="pf-pat-pct ${cls}">${sign}${p.toFixed(2)}%</div>
+      <div class="pf-pat-val">${KRW(Math.round(d.current))} / ${KRW(d.invested)}</div>
+    </div>`;
+  }).join('');
+
+  el.innerHTML = `<div class="pf-wrap">
+    <div class="pf-main-card">
+      <div class="pf-main-label">💼 가상 포트폴리오 — 종목당 100만원 균등 투자 · ${stocks.length}종목 현재가 반영</div>
+      <div class="pf-main-row">
+        <div class="pf-main-block">
+          <div class="pf-block-label">투자 원금</div>
+          <div class="pf-block-val">${KRW(totalInvested)}</div>
+        </div>
+        <div class="pf-arrow">→</div>
+        <div class="pf-main-block">
+          <div class="pf-block-label">현재 가치</div>
+          <div class="pf-block-val">${KRW(Math.round(totalCurrent))}</div>
+        </div>
+        <div class="pf-divider"></div>
+        <div class="pf-main-gain ${gainCls}">
+          <div class="pf-gain-pct">${gainSign}${totalPct.toFixed(2)}%</div>
+          <div class="pf-gain-abs">${gainSign}${KRW(Math.round(totalGain))}</div>
+        </div>
+      </div>
+    </div>
+    <div class="pf-pat-row">${patCards}</div>
+  </div>`;
+  el.style.display = 'block';
 }
 
 // ── 삭제 ─────────────────────────────────────────────────────────────
@@ -958,17 +1177,26 @@ async function loadConfigs() {
   grid.innerHTML = '<div class="loading"><span class="spinner"></span>로딩 중...</div>';
   try {
     const data = await apiFetch('/api/algorithm-configs');
-    const algoIcon = { '골삼이': '📊', '골든샘플': '🔑', '레드삼각': '📐', '골삼이(상승초입)': '🚀' };
-    grid.innerHTML = Object.entries(data).map(([algo, params]) => `
-      <div class="cfg-card">
-        <h4>${algoIcon[algo] || ''} ${escHtml(algo)}</h4>
-        ${Object.entries(params).map(([k, v]) =>
-          `<div class="cfg-row"><span class="cfg-key">${escHtml(k)}</span><span class="cfg-val">${v}</span></div>`
-        ).join('')}
+    const algoIcon = { '골삼이': '📊', '골든샘플': '🔑', '레드삼각': '📐', '골삼이(상승초입)': '🚀', 'MA압축지지': '📦' };
+    grid.innerHTML = Object.entries(data).map(([algo, params], idx) => `
+      <div class="cfg-card" id="cfg-${idx}">
+        <div class="cfg-header" onclick="toggleCfg(${idx})">
+          <h4>${algoIcon[algo] || ''} ${escHtml(algo)}</h4>
+          <span class="cfg-chevron">▼</span>
+        </div>
+        <div class="cfg-params">
+          ${Object.entries(params).map(([k, v]) =>
+            `<div class="cfg-row"><span class="cfg-key">${escHtml(k)}</span><span class="cfg-val">${v}</span></div>`
+          ).join('')}
+        </div>
       </div>`).join('');
   } catch(e) {
     grid.innerHTML = `<div class="empty">오류: ${escHtml(e.message)}</div>`;
   }
+}
+
+function toggleCfg(idx) {
+  document.getElementById('cfg-' + idx)?.classList.toggle('open');
 }
 
 async function submitRequest() {
@@ -1019,7 +1247,7 @@ function escHtml(str) {
 
 // ── 탭 전환 ──────────────────────────────────────────────────────────
 
-const TAB_NAMES = ['today', 'history', 'tracking', 'algo'];
+const TAB_NAMES = ['today', 'history', 'tracking', 'algotrack', 'algo'];
 const tabLoaded = {};
 
 function switchTab(name) {
@@ -1034,11 +1262,218 @@ function switchTab(name) {
     if (name === 'today')    loadLatest();
     if (name === 'history')  loadHistory();
     if (name === 'tracking') loadTracking();
+    if (name === 'algotrack') loadAlgoTracking();
     if (name === 'algo')     { loadConfigs(); loadRequests(); }
   }
 }
 
+// ── 탭4: 알고리즘별 추적 ─────────────────────────────────────────────
+
+let _algoTrackPrices = {};  // ticker → 현재가 (이 탭 전용, tracking과 공유)
+
+async function loadAlgoTracking() {
+  const body = document.getElementById('algotrack-body');
+  body.innerHTML = '<div class="loading"><span class="spinner"></span>로딩 중...</div>';
+  try {
+    _trackingData = await apiFetch('/api/stocks');
+    // 저장된 현재가 적용 (tracking과 공유)
+    for (const [ticker, info] of Object.entries(_savedPrices)) {
+      if (!_algoTrackPrices[ticker]) _algoTrackPrices[ticker] = info.price;
+      if (!_trackingPrices[ticker])  _trackingPrices[ticker]  = info.price;
+    }
+    renderAlgoTracking();
+    _showPriceTs('price-ts-algo');
+  } catch(e) {
+    body.innerHTML = `<div class="empty">오류: ${escHtml(e.message)}</div>`;
+  }
+}
+
+async function fetchAllPricesAlgo() {
+  if (!_trackingData.length) return;
+  const btn = document.getElementById('btn-fetch-prices-algo');
+  btn.disabled = true;
+  btn.textContent = '불러오는 중...';
+
+  for (const r of _trackingData) {
+    try {
+      const data = await apiFetch(`/api/price/${r.ticker}`);
+      _algoTrackPrices[r.ticker] = data.price;
+      _trackingPrices[r.ticker]  = data.price;
+    } catch(e) { /* skip */ }
+    await new Promise(resolve => setTimeout(resolve, 200));
+  }
+
+  btn.disabled = false;
+  btn.textContent = '📡 현재가 불러오기';
+  renderAlgoTracking();
+  _showPriceTs('price-ts-algo');
+  await _savePricesToServer(_algoTrackPrices);
+}
+
+function renderAlgoTracking() {
+  const INVEST = 1_000_000;
+  const patternOrder = ['골삼이(상승초입)', '골삼이', '골든샘플', '레드삼각', 'MA압축지지'];
+  const patternIcons = { '골삼이':'📊', '골든샘플':'🔑', '레드삼각':'📐', '골삼이(상승초입)':'🚀', 'MA압축지지':'📦' };
+
+  // 패턴별 그룹핑
+  const groups = {};
+  for (const r of _trackingData) {
+    const pat = r.last_pattern || '기타';
+    if (!groups[pat]) groups[pat] = [];
+    groups[pat].push(r);
+  }
+
+  // 서브탭 순서 (포트폴리오 카드 onclick 인덱스와 통일)
+  const orderedPats = [
+    ...patternOrder.filter(p => groups[p]),
+    ...Object.keys(groups).filter(p => !patternOrder.includes(p)),
+  ];
+
+  // ── 포트폴리오 요약 (현재가 있는 종목만) ─────────────────────────────
+  const withPrice = _trackingData.filter(r => r.first_price && _algoTrackPrices[r.ticker]);
+  const pfEl = document.getElementById('algotrack-portfolio');
+  if (withPrice.length) {
+    let totalInvested = 0, totalCurrent = 0;
+    const byPat = {};
+    for (const r of withPrice) {
+      const cp  = _algoTrackPrices[r.ticker];
+      const val = (INVEST / r.first_price) * cp;
+      totalInvested += INVEST;
+      totalCurrent  += val;
+      const pat = r.last_pattern || '기타';
+      if (!byPat[pat]) byPat[pat] = { invested: 0, current: 0, count: 0 };
+      byPat[pat].invested += INVEST;
+      byPat[pat].current  += val;
+      byPat[pat].count++;
+    }
+    const totalGain = totalCurrent - totalInvested;
+    const totalPct  = totalGain / totalInvested * 100;
+    const gainCls   = totalGain > 0 ? 'pf-pos' : totalGain < 0 ? 'pf-neg' : 'pf-zero';
+    const gainSign  = totalGain >= 0 ? '+' : '';
+
+    // 포트폴리오 카드: orderedPats(서브탭 순서)와 동일 인덱스 사용
+    const patCards = orderedPats.filter(p => byPat[p]).map(pat => {
+      const d = byPat[pat];
+      const g = d.current - d.invested;
+      const p = g / d.invested * 100;
+      const cls  = g > 0 ? 'pf-pos' : g < 0 ? 'pf-neg' : 'pf-zero';
+      const sign = g >= 0 ? '+' : '';
+      const tabIdx = orderedPats.indexOf(pat);
+      return `<div class="pf-pat-card" style="cursor:pointer" onclick="switchAlgoTab(${tabIdx})">
+        <div class="pf-pat-label">${patternIcons[pat]||'⚪'} ${escHtml(pat)} <span class="pf-pat-count">${d.count}종목</span></div>
+        <div class="pf-pat-pct ${cls}">${sign}${p.toFixed(2)}%</div>
+        <div class="pf-pat-val">${KRW(Math.round(d.current))} / ${KRW(d.invested)}</div>
+      </div>`;
+    }).join('');
+
+    pfEl.innerHTML = `<div class="pf-wrap">
+      <div class="pf-main-card">
+        <div class="pf-main-label">💼 가상 포트폴리오 — 종목당 100만원 균등 투자 · ${withPrice.length}종목 현재가 반영</div>
+        <div class="pf-main-row">
+          <div class="pf-main-block"><div class="pf-block-label">투자 원금</div><div class="pf-block-val">${KRW(totalInvested)}</div></div>
+          <div class="pf-arrow">→</div>
+          <div class="pf-main-block"><div class="pf-block-label">현재 가치</div><div class="pf-block-val">${KRW(Math.round(totalCurrent))}</div></div>
+          <div class="pf-divider"></div>
+          <div class="pf-main-gain ${gainCls}">
+            <div class="pf-gain-pct">${gainSign}${totalPct.toFixed(2)}%</div>
+            <div class="pf-gain-abs">${gainSign}${KRW(Math.round(totalGain))}</div>
+          </div>
+        </div>
+      </div>
+      <div class="pf-pat-row">${patCards}</div>
+    </div>`;
+    pfEl.style.display = 'block';
+  } else {
+    pfEl.style.display = 'none';
+  }
+
+  // ── 서브탭 렌더링 ─────────────────────────────────────────────────────
+  const body = document.getElementById('algotrack-body');
+  if (!_trackingData.length) {
+    body.innerHTML = '<div class="empty">추적 중인 종목이 없습니다.</div>';
+    return;
+  }
+
+  // 서브탭 버튼 바
+  const btnBar = orderedPats.map((pat, i) => {
+    const icon   = patternIcons[pat] || '⚪';
+    const count  = groups[pat].length;
+    const withCp = groups[pat].filter(r => r.first_price && _algoTrackPrices[r.ticker]);
+    let retLabel = '';
+    if (withCp.length) {
+      let inv = 0, cur = 0;
+      for (const r of withCp) { inv += INVEST; cur += (INVEST / r.first_price) * _algoTrackPrices[r.ticker]; }
+      const p = (cur - inv) / inv * 100;
+      const cls  = p > 0 ? 'pf-pos' : p < 0 ? 'pf-neg' : '';
+      const sign = p >= 0 ? '+' : '';
+      retLabel = ` <span class="${cls}" style="font-size:11px">${sign}${p.toFixed(1)}%</span>`;
+    }
+    return `<button class="subtab-btn${i === 0 ? ' active' : ''}" onclick="switchAlgoTab(${i})">${icon} ${escHtml(pat)} <span style="font-size:11px;opacity:.7">${count}</span>${retLabel}</button>`;
+  }).join('');
+
+  // 서브탭 패널들
+  const panels = orderedPats.map((pat, i) => {
+    let stocks = groups[pat];
+
+    // 정렬 적용
+    const sc = _algoTrackSort;
+    if (sc.col) {
+      if (sc.col === 'return_pct') {
+        stocks = [...stocks].sort((a, b) => {
+          const pa = _algoTrackPrices[a.ticker] || 0;
+          const pb = _algoTrackPrices[b.ticker] || 0;
+          const ra = a.first_price && pa ? (pa - a.first_price) / a.first_price : -999;
+          const rb = b.first_price && pb ? (pb - b.first_price) / b.first_price : -999;
+          return (ra - rb) * sc.dir;
+        });
+      } else if (sc.col === 'current_price') {
+        stocks = [...stocks].sort((a, b) =>
+          ((_algoTrackPrices[a.ticker] || 0) - (_algoTrackPrices[b.ticker] || 0)) * sc.dir
+        );
+      } else {
+        stocks = sortData(stocks, sc.col, sc.dir);
+      }
+    }
+
+    const rows = stocks.map(r => {
+      const cp      = _algoTrackPrices[r.ticker];
+      const curCell = cp ? KRW(cp) : '<span style="color:var(--text-muted)">—</span>';
+      const retHtml = cp ? retCell(r.first_price, cp) : '—';
+      return `<tr>
+        <td><strong>${naverLink(r.ticker, r.name)}</strong><br><span style="font-size:11px;color:var(--text-muted)">${escHtml(r.ticker)}</span></td>
+        <td>${KRW(r.first_price)}</td>
+        <td>${retHtml}</td>
+        <td>${curCell}</td>
+        <td style="font-size:12px;color:var(--text-muted)">${fmtDate(r.first_detected)}</td>
+        <td>${confBar(r.last_conf)}</td>
+      </tr>`;
+    }).join('');
+    return `<div class="subtab-panel${i === 0 ? ' active' : ''}" id="subtabpanel-${i}">
+      <div class="table-wrap">
+        <table>
+          <thead><tr>${buildAlgoTrackThead()}</tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+    </div>`;
+  }).join('');
+
+  body.innerHTML = `<div class="subtab-bar">${btnBar}</div>${panels}`;
+
+  // 패턴명 → 인덱스 맵 전역 저장 (switchAlgoTab에서 사용)
+  window._algoTabMap = Object.fromEntries(orderedPats.map((p, i) => [p, i]));
+}
+
+function switchAlgoTab(idx) {
+  idx = parseInt(idx);
+  const body = document.getElementById('algotrack-body');
+  if (!body) return;
+  body.querySelectorAll('.subtab-btn').forEach((b, i) => b.classList.toggle('active', i === idx));
+  body.querySelectorAll('.subtab-panel').forEach((p, i) => p.classList.toggle('active', i === idx));
+}
+
 // 초기 로드
+initSavedPrices();   // DB 저장 현재가 미리 로드
 loadLatest();
 tabLoaded.today = true;
 </script>

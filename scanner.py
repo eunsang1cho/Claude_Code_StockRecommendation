@@ -435,6 +435,153 @@ def detect_golsami_early(df: pd.DataFrame, ticker: str, cfg: dict) -> dict | Non
     }
 
 
+# ── MA압축지지 ────────────────────────────────────────────────────────
+
+def detect_ma_compression(df: pd.DataFrame, ticker: str, cfg: dict) -> dict | None:
+    """
+    MA압축지지: 장대양봉 발생 후 3~30일 사이에서
+    1. MA20이 장대 저가 ±3% 이내 접근 + 우상향 (slope ≥ 0.001)
+    2. ATR/가격 ≤ 1.5% (변동성 압축)
+    3. 현재 거래량 ≤ 장대 거래량 × 0.5 (거래량 축소)
+    4. 5~30일 박스권 내 등락 ≤ 8%
+    5. |MA20 - MA60| / 가격 ≤ 3% (MA 수렴)
+    """
+    if df is None or len(df) < _MIN_ROWS:
+        return None
+
+    df = _indicators(df)
+    cur   = df.iloc[-1]
+    price = float(cur["Close"])
+    ma20  = float(cur["MA20"])
+    ma60  = float(cur["MA60"])
+    ma240 = float(cur["MA240"])
+
+    if not _base_ok(df, price, ma240):
+        return None
+    if pd.isna(ma20) or ma20 == 0 or pd.isna(ma60) or ma60 == 0:
+        return None
+
+    # 파라미터
+    lookback       = int(cfg.get("base_candle_lookback", 60))
+    big_pct        = float(cfg.get("big_pct", 0.07))
+    body_ratio     = float(cfg.get("body_ratio", 0.6))
+    vol_mult       = float(cfg.get("vol_mult", 2.0))
+    days_min       = int(cfg.get("ma20_approach_days_min", 3))
+    days_max       = int(cfg.get("ma20_approach_days_max", 30))
+    ma20_near_tol  = float(cfg.get("ma20_near_bottom_tol", 0.03))
+    ma20_slope_min = float(cfg.get("ma20_slope_min", 0.001))
+    atr_ratio_max  = float(cfg.get("atr_ratio_max", 0.015))
+    vol_shrink     = float(cfg.get("vol_shrink_ratio", 0.5))
+    box_days_min   = int(cfg.get("box_days_min", 5))
+    box_days_max   = int(cfg.get("box_days_max", 30))
+    box_range_pct  = float(cfg.get("box_range_pct", 0.08))
+    ma_conv_tol    = float(cfg.get("ma20_ma60_conv_tol", 0.03))
+
+    # Step 1: 최근 lookback일 내 장대양봉 탐색 (현재봉 제외, 최신부터 역탐)
+    search = df.iloc[-(lookback + 1):-1]
+    bc_row, bc_idx = None, None
+    for i in range(len(search) - 1, -1, -1):
+        row = search.iloc[i]
+        candle_range = float(row["High"] - row["Low"])
+        if candle_range == 0 or row["Open"] >= row["Close"]:
+            continue
+        body  = float(row["Close"] - row["Open"])
+        vma20 = float(row["VMA20"])
+        if vma20 == 0:
+            continue
+        if (float(row["pct"]) >= big_pct
+                and body / candle_range >= body_ratio
+                and float(row["Volume"]) >= vma20 * vol_mult):
+            bc_row = row
+            bc_idx = search.index[i]
+            break
+
+    if bc_row is None:
+        return None
+
+    # Step 2: 경과 일수 확인
+    days_after = len(df[df.index > bc_idx])
+    if not (days_min <= days_after <= days_max):
+        return None
+
+    bc_low = float(bc_row["Low"])
+    bc_vol = float(bc_row["Volume"])
+
+    # Step 2 (cont): MA20이 장대 저가 ma20_near_tol% 이내 접근
+    if abs(ma20 - bc_low) / bc_low > ma20_near_tol:
+        return None
+
+    # Step 2 (cont): MA20 기울기 ≥ ma20_slope_min (우상향)
+    prev_ma20 = float(df["MA20"].iloc[-2])
+    if pd.isna(prev_ma20) or prev_ma20 == 0:
+        return None
+    if (ma20 - prev_ma20) / prev_ma20 < ma20_slope_min:
+        return None
+
+    # Step 3a: ATR(14) / 현재가 ≤ atr_ratio_max
+    atr_window = df.iloc[-15:]
+    tr_vals = [
+        max(
+            float(atr_window["High"].iloc[j]) - float(atr_window["Low"].iloc[j]),
+            abs(float(atr_window["High"].iloc[j]) - float(atr_window["Close"].iloc[j - 1])),
+            abs(float(atr_window["Low"].iloc[j])  - float(atr_window["Close"].iloc[j - 1])),
+        )
+        for j in range(1, len(atr_window))
+    ]
+    atr = sum(tr_vals) / len(tr_vals) if tr_vals else 0
+    if price == 0 or atr / price > atr_ratio_max:
+        return None
+
+    # Step 3b: 현재 거래량 ≤ 장대 거래량 × vol_shrink
+    if float(cur["Volume"]) > bc_vol * vol_shrink:
+        return None
+
+    # Step 3c: 박스권 (장대 이후 구간, 최대 box_days_max) ≤ box_range_pct
+    box_size = min(days_after, box_days_max)
+    if box_size < box_days_min:
+        return None
+    box_df   = df.iloc[-box_size:]
+    box_high = float(box_df["High"].max())
+    box_low  = float(box_df["Low"].min())
+    if box_low == 0 or (box_high - box_low) / box_low > box_range_pct:
+        return None
+
+    # Step 3d: |MA20 - MA60| / 가격 ≤ ma_conv_tol
+    if abs(ma20 - ma60) / price > ma_conv_tol:
+        return None
+
+    # 신뢰도 계산
+    conf = int(cfg.get("conf_base", 72))
+    ma20_to_low = abs(ma20 - bc_low) / bc_low
+    if ma20_to_low < 0.01:
+        conf += int(cfg.get("conf_ma20_close", 10))   # MA20이 장대 저가 1% 이내
+    if float(bc_row["pct"]) >= 0.15:
+        conf += int(cfg.get("conf_big15", 8))          # 장대 +15% 이상
+    if abs(price - ma20) / ma20 <= 0.01:
+        conf += int(cfg.get("conf_near_ma20", 7))      # 현재가 MA20 1% 이내
+
+    name = get_stock_name(ticker)
+    return {
+        "ticker":     ticker,
+        "name":       name,
+        "pattern":    "MA압축지지",
+        "bc_date":    bc_idx.strftime("%m/%d"),
+        "bc_pct":     f"+{bc_row['pct'] * 100:.1f}%",
+        "bc_low":     int(bc_low),
+        "days_after": days_after,
+        "current":    int(price),
+        "ma20":       int(ma20),
+        "ma60":       int(ma60),
+        "ma240":      int(ma240),
+        "entry":      (int(bc_low * 0.99), int(ma20 * 1.01)),
+        "stop":       int(bc_low * 0.97),
+        "target":     int(float(bc_row["High"]) * 1.10),
+        "week52_high": int(df["High"].tail(252).max()),
+        "week52_low":  int(df["Low"].tail(252).min()),
+        "conf":       min(conf, 97),
+    }
+
+
 # ── 전체 스캔 ─────────────────────────────────────────────────────────
 
 def scan_all(tickers: list[str]) -> list[dict]:
@@ -443,10 +590,11 @@ def scan_all(tickers: list[str]) -> list[dict]:
     스캔 시작 시 DB에서 파라미터를 한 번만 로드해 사용.
     """
     from database import get_algo_config
-    cfg_early   = get_algo_config("골삼이(상승초입)")
-    cfg_golsami = get_algo_config("골삼이")
-    cfg_golden  = get_algo_config("골든샘플")
-    cfg_red     = get_algo_config("레드삼각")
+    cfg_early       = get_algo_config("골삼이(상승초입)")
+    cfg_golsami     = get_algo_config("골삼이")
+    cfg_golden      = get_algo_config("골든샘플")
+    cfg_red         = get_algo_config("레드삼각")
+    cfg_ma_compress = get_algo_config("MA압축지지")
 
     results: list[dict] = []
 
@@ -460,7 +608,8 @@ def scan_all(tickers: list[str]) -> list[dict]:
                 detect_golsami_early(df, ticker, cfg_early) or
                 detect_golsami(df, ticker, cfg_golsami) or
                 detect_golden_sample(df, ticker, cfg_golden) or
-                detect_red_triangle(df, ticker, cfg_red)
+                detect_red_triangle(df, ticker, cfg_red) or
+                detect_ma_compression(df, ticker, cfg_ma_compress)
             )
             if result:
                 results.append(result)
@@ -486,10 +635,13 @@ def format_result(r: dict) -> str:
     ma240 = r["ma240"]
     stop = r["stop"]
 
-    emoji = {"골삼이": "📊", "골든샘플": "🔑", "레드삼각": "📐", "골삼이(상승초입)": "🚀"}.get(p, "⚪")
+    emoji = {
+        "골삼이": "📊", "골든샘플": "🔑", "레드삼각": "📐",
+        "골삼이(상승초입)": "🚀", "MA압축지지": "📦",
+    }.get(p, "⚪")
 
     # 패턴별 매수존
-    if p in ("골삼이", "레드삼각", "골삼이(상승초입)"):
+    if p in ("골삼이", "레드삼각", "골삼이(상승초입)", "MA압축지지"):
         entry_str = f"₩{r['entry'][0]:,}~{r['entry'][1]:,}"
     else:  # 골든샘플
         entry_str = f"₩{r['ma20']:,} 부근"

@@ -68,6 +68,26 @@ _DEFAULT_CONFIGS: dict[str, dict] = {
         "conf_vol5x": 8,        # 거래량 5배 이상 시 가산점
         "conf_near_ma20": 10,   # 현재가 20MA ±1.5% 이내 시 가산점
     },
+    "MA압축지지": {
+        "base_candle_lookback": 60,   # 장대양봉 탐색 기간 (최근 N 거래일)
+        "big_pct": 0.07,              # 장대양봉 최소 등락률 (7%)
+        "body_ratio": 0.60,           # 장대양봉 몸통 비율 기준 (60% 이상)
+        "vol_mult": 2.0,              # 장대양봉 거래량 배수, 20MA 대비
+        "ma20_approach_days_min": 3,  # MA20 접근 확인 최소 경과 일수
+        "ma20_approach_days_max": 30, # MA20 접근 확인 최대 경과 일수
+        "ma20_near_bottom_tol": 0.03, # MA20 vs 장대 저가 근접 허용 오차 (±3%)
+        "ma20_slope_min": 0.001,      # MA20 최소 기울기 (0.1%/일, 우상향)
+        "atr_ratio_max": 0.015,       # ATR / 현재가 최대 비율 (1.5%)
+        "vol_shrink_ratio": 0.5,      # 현재 거래량 ≤ 장대 거래량 × N
+        "box_days_min": 5,            # 박스권 최소 확인 일수
+        "box_days_max": 30,           # 박스권 최대 확인 일수
+        "box_range_pct": 0.08,        # 박스권 허용 등락 범위 (8% 이내)
+        "ma20_ma60_conv_tol": 0.03,   # |MA20 - MA60| / 가격 최대 허용치 (3%)
+        "conf_base": 72,              # 기본 신뢰도
+        "conf_ma20_close": 10,        # MA20이 장대 저가 1% 이내 시 가산점
+        "conf_big15": 8,              # 장대 +15% 이상 시 가산점
+        "conf_near_ma20": 7,          # 현재가 MA20 1% 이내 시 가산점
+    },
 }
 
 _PARAM_DOCS: dict[str, dict[str, str]] = {
@@ -123,6 +143,26 @@ _PARAM_DOCS: dict[str, dict[str, str]] = {
         "conf_vol5x":     "거래량 5배 이상 시 신뢰도 가산점 (기본: 8)",
         "conf_near_ma20": "현재가 20MA ±1.5% 이내 시 신뢰도 가산점 (기본: 10)",
     },
+    "MA압축지지": {
+        "base_candle_lookback":  "장대양봉 탐색 기간, 거래일 (기본: 60)",
+        "big_pct":               "장대양봉 최소 등락률 (기본: 0.07 = 7%)",
+        "body_ratio":            "장대양봉 몸통 비율 기준 (기본: 0.60 = 60% 이상)",
+        "vol_mult":              "장대양봉 거래량 배수, 20MA 대비 (기본: 2.0)",
+        "ma20_approach_days_min":"MA20 접근 확인 최소 경과 일수 (기본: 3)",
+        "ma20_approach_days_max":"MA20 접근 확인 최대 경과 일수 (기본: 30)",
+        "ma20_near_bottom_tol":  "MA20 vs 장대 저가 근접 허용 오차 (기본: 0.03 = ±3%)",
+        "ma20_slope_min":        "MA20 최소 일간 기울기 (기본: 0.001 = 0.1%/일)",
+        "atr_ratio_max":         "ATR14 / 현재가 최대 허용 비율 (기본: 0.015 = 1.5%)",
+        "vol_shrink_ratio":      "현재 거래량 상한 = 장대 거래량 × N (기본: 0.5)",
+        "box_days_min":          "박스권 최소 확인 일수 (기본: 5)",
+        "box_days_max":          "박스권 최대 확인 일수 (기본: 30)",
+        "box_range_pct":         "박스권 허용 고저 범위 (기본: 0.08 = 8% 이내)",
+        "ma20_ma60_conv_tol":    "|MA20 - MA60| / 가격 최대 허용치 (기본: 0.03 = 3%)",
+        "conf_base":             "기본 신뢰도 점수 (기본: 72)",
+        "conf_ma20_close":       "MA20이 장대 저가 1% 이내 시 가산점 (기본: 10)",
+        "conf_big15":            "장대 +15% 이상 시 가산점 (기본: 8)",
+        "conf_near_ma20":        "현재가 MA20 1% 이내 시 가산점 (기본: 7)",
+    },
 }
 
 
@@ -177,6 +217,12 @@ def init_db() -> None:
                 params       TEXT NOT NULL,
                 updated_at   TEXT NOT NULL,
                 from_request INTEGER
+            );
+
+            CREATE TABLE IF NOT EXISTS price_snapshots (
+                ticker      TEXT PRIMARY KEY,
+                price       INTEGER NOT NULL,
+                fetched_at  TEXT NOT NULL
             );
 
             CREATE INDEX IF NOT EXISTS idx_results_session ON scan_results(session_id);
@@ -375,3 +421,28 @@ def update_algo_config(
                  from_request = excluded.from_request""",
             (algorithm, json.dumps(params, ensure_ascii=False), now, from_request_id),
         )
+
+
+# ── 현재가 스냅샷 ──────────────────────────────────────────────────────
+
+def save_price_snapshots(prices: dict[str, int]) -> None:
+    """종목별 현재가 + 조회 시각을 DB에 UPSERT"""
+    now = datetime.now().isoformat(timespec="seconds")
+    with _connect() as conn:
+        conn.executemany(
+            """INSERT INTO price_snapshots (ticker, price, fetched_at)
+               VALUES (?, ?, ?)
+               ON CONFLICT(ticker) DO UPDATE SET
+                 price      = excluded.price,
+                 fetched_at = excluded.fetched_at""",
+            [(ticker, price, now) for ticker, price in prices.items()],
+        )
+
+
+def get_price_snapshots() -> dict:
+    """저장된 현재가 스냅샷 전체 반환: {ticker: {price, fetched_at}}"""
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT ticker, price, fetched_at FROM price_snapshots"
+        ).fetchall()
+    return {row["ticker"]: {"price": row["price"], "fetched_at": row["fetched_at"]} for row in rows}
