@@ -225,11 +225,111 @@ def init_db() -> None:
                 fetched_at  TEXT NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS daily_indicators (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                date        TEXT NOT NULL,
+                time_slot   TEXT NOT NULL DEFAULT 'morning',
+                data_json   TEXT NOT NULL,
+                crash_score REAL,
+                notes       TEXT DEFAULT '',
+                created_at  TEXT DEFAULT (datetime('now', 'localtime')),
+                UNIQUE(date, time_slot)
+            );
+
+            CREATE TABLE IF NOT EXISTS future_indicators (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                date        TEXT NOT NULL UNIQUE,
+                data_json   TEXT NOT NULL,
+                created_at  TEXT DEFAULT (datetime('now', 'localtime'))
+            );
+
+            CREATE TABLE IF NOT EXISTS portfolio_snapshots (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                date        TEXT NOT NULL UNIQUE,
+                rows_json   TEXT NOT NULL,
+                summary_json TEXT NOT NULL,
+                created_at  TEXT DEFAULT (datetime('now', 'localtime'))
+            );
+
+            CREATE TABLE IF NOT EXISTS war_indicators (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                date        TEXT NOT NULL UNIQUE,
+                data_json   TEXT NOT NULL,
+                created_at  TEXT DEFAULT (datetime('now', 'localtime'))
+            );
+
+            CREATE TABLE IF NOT EXISTS news_articles (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                source       TEXT NOT NULL,
+                source_name  TEXT NOT NULL,
+                source_type  TEXT NOT NULL,
+                category     TEXT DEFAULT '',
+                title        TEXT NOT NULL,
+                url          TEXT NOT NULL UNIQUE,
+                description  TEXT DEFAULT '',
+                published_at TEXT NOT NULL,
+                sentiment    TEXT DEFAULT '중립',
+                tags         TEXT DEFAULT '[]',
+                created_at   TEXT DEFAULT (datetime('now', 'localtime'))
+            );
+
+            CREATE TABLE IF NOT EXISTS news_analysis (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                date         TEXT NOT NULL UNIQUE,
+                analysis_json TEXT NOT NULL,
+                created_at   TEXT DEFAULT (datetime('now', 'localtime'))
+            );
+
+            CREATE TABLE IF NOT EXISTS news_backfill_log (
+                week         TEXT NOT NULL UNIQUE,
+                article_count INTEGER DEFAULT 0,
+                analyzed     INTEGER DEFAULT 0,
+                created_at   TEXT DEFAULT (datetime('now', 'localtime'))
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_war_date ON war_indicators(date);
+            CREATE INDEX IF NOT EXISTS idx_news_pub ON news_articles(published_at);
+            CREATE INDEX IF NOT EXISTS idx_news_type ON news_articles(source_type);
+            CREATE INDEX IF NOT EXISTS idx_news_analysis_date ON news_analysis(date);
+            CREATE INDEX IF NOT EXISTS idx_portfolio_date ON portfolio_snapshots(date);
             CREATE INDEX IF NOT EXISTS idx_results_session ON scan_results(session_id);
             CREATE INDEX IF NOT EXISTS idx_results_ticker  ON scan_results(ticker);
             CREATE INDEX IF NOT EXISTS idx_results_scanned ON scan_results(scanned_at);
+            CREATE INDEX IF NOT EXISTS idx_ind_date ON daily_indicators(date);
+            CREATE INDEX IF NOT EXISTS idx_future_date ON future_indicators(date);
         """)
+    # daily_indicators 마이그레이션: UNIQUE(date) → UNIQUE(date, time_slot)
+    with _connect() as conn:
+        cols = [r[1] for r in conn.execute("PRAGMA table_info(daily_indicators)").fetchall()]
+        if 'time_slot' not in cols:
+            conn.executescript("""
+                CREATE TABLE IF NOT EXISTS daily_indicators_v2 (
+                    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                    date        TEXT NOT NULL,
+                    time_slot   TEXT NOT NULL DEFAULT 'morning',
+                    data_json   TEXT NOT NULL,
+                    crash_score REAL,
+                    notes       TEXT DEFAULT '',
+                    created_at  TEXT DEFAULT (datetime('now', 'localtime')),
+                    UNIQUE(date, time_slot)
+                );
+                INSERT OR IGNORE INTO daily_indicators_v2
+                    (date, time_slot, data_json, crash_score, notes, created_at)
+                SELECT date, 'morning', data_json, crash_score, notes, created_at
+                FROM daily_indicators;
+                DROP TABLE daily_indicators;
+                ALTER TABLE daily_indicators_v2 RENAME TO daily_indicators;
+                CREATE INDEX IF NOT EXISTS idx_ind_date ON daily_indicators(date);
+            """)
+
     print("✅ DB 초기화 완료:", DB_FILE)
+
+    # market_data.db 초기화
+    try:
+        import data_store
+        data_store.init_db()
+    except Exception as e:
+        print(f"⚠️  market_data.db 초기화 실패: {e}")
 
 
 def save_scan(results: list[dict], total_candidates: int) -> None:
@@ -446,3 +546,343 @@ def get_price_snapshots() -> dict:
             "SELECT ticker, price, fetched_at FROM price_snapshots"
         ).fetchall()
     return {row["ticker"]: {"price": row["price"], "fetched_at": row["fetched_at"]} for row in rows}
+
+
+# ── 일일 지표 ──────────────────────────────────────────────────────────
+
+SLOT_ORDER = {"morning": 0, "afternoon": 1, "night": 2, "dawn": 3}
+
+
+def save_daily_indicators(date: str, data: dict, crash_score: float,
+                          notes: str = "", time_slot: str = "morning") -> int:
+    with _connect() as conn:
+        existing = conn.execute(
+            "SELECT id FROM daily_indicators WHERE date=? AND time_slot=?",
+            (date, time_slot),
+        ).fetchone()
+        if existing:
+            conn.execute(
+                """UPDATE daily_indicators
+                   SET data_json=?, crash_score=?, notes=?, created_at=datetime('now','localtime')
+                   WHERE date=? AND time_slot=?""",
+                (json.dumps(data, ensure_ascii=False), crash_score, notes, date, time_slot),
+            )
+            return existing["id"]
+        cur = conn.execute(
+            """INSERT INTO daily_indicators (date, time_slot, data_json, crash_score, notes)
+               VALUES (?,?,?,?,?)""",
+            (date, time_slot, json.dumps(data, ensure_ascii=False), crash_score, notes),
+        )
+        return cur.lastrowid
+
+
+def get_daily_indicators(days: int = 60) -> list[dict]:
+    """날짜별 최신 슬롯 1개씩 반환 (차트용 일별 집계)"""
+    with _connect() as conn:
+        # 날짜별로 가장 최근 created_at 레코드 1개씩
+        rows = conn.execute(
+            """SELECT date, time_slot, data_json, crash_score, notes, created_at
+               FROM daily_indicators
+               WHERE date IN (
+                   SELECT DISTINCT date FROM daily_indicators
+                   ORDER BY date DESC LIMIT ?
+               )
+               ORDER BY date DESC, created_at DESC""",
+            (days,),
+        ).fetchall()
+
+    seen, result = set(), []
+    for row in rows:
+        d = row["date"]
+        if d in seen:
+            continue
+        seen.add(d)
+        try:
+            data = json.loads(row["data_json"])
+        except Exception:
+            data = {}
+        result.append({
+            "date":        d,
+            "time_slot":   row["time_slot"],
+            "data":        data,
+            "crash_score": row["crash_score"],
+            "notes":       row["notes"],
+            "created_at":  row["created_at"],
+        })
+    return result
+
+
+def get_daily_indicators_all(days: int = 60) -> list[dict]:
+    """모든 슬롯 반환 (지표별 하루 4회 세부 차트용)"""
+    with _connect() as conn:
+        rows = conn.execute(
+            """SELECT date, time_slot, data_json, crash_score, notes, created_at
+               FROM daily_indicators
+               WHERE date >= date('now', ? || ' days')
+               ORDER BY date ASC, created_at ASC""",
+            (f"-{days}",),
+        ).fetchall()
+    result = []
+    for row in rows:
+        try:
+            data = json.loads(row["data_json"])
+        except Exception:
+            data = {}
+        result.append({
+            "date":        row["date"],
+            "time_slot":   row["time_slot"],
+            "data":        data,
+            "crash_score": row["crash_score"],
+            "created_at":  row["created_at"],
+        })
+    return result
+
+
+# ── 미래지표 ────────────────────────────────────────────────────────────
+
+def save_future_indicators(date: str, data: dict) -> int:
+    """미래방향성 스냅샷 저장 (날짜당 1개, UPSERT)"""
+    data_json = json.dumps(data, ensure_ascii=False)
+    with _connect() as conn:
+        cur = conn.execute(
+            """INSERT INTO future_indicators (date, data_json)
+               VALUES (?, ?)
+               ON CONFLICT(date) DO UPDATE SET
+                 data_json  = excluded.data_json,
+                 created_at = datetime('now', 'localtime')""",
+            (date, data_json),
+        )
+        return cur.lastrowid
+
+
+def get_future_indicators(days: int = 90) -> list[dict]:
+    """최근 N일 미래지표 스냅샷 반환 (오래된→최신 순)"""
+    with _connect() as conn:
+        rows = conn.execute(
+            """SELECT date, data_json, created_at
+               FROM future_indicators
+               WHERE date >= date('now', ? || ' days')
+               ORDER BY date ASC""",
+            (f"-{days}",),
+        ).fetchall()
+    result = []
+    for row in rows:
+        try:
+            data = json.loads(row["data_json"])
+        except Exception:
+            data = {}
+        result.append({
+            "date":       row["date"],
+            "data":       data,
+            "created_at": row["created_at"],
+        })
+    return result
+
+
+def get_future_indicators_latest() -> dict | None:
+    """가장 최근 미래지표 스냅샷 1개 반환"""
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT date, data_json, created_at FROM future_indicators ORDER BY date DESC LIMIT 1"
+        ).fetchone()
+    if not row:
+        return None
+    try:
+        data = json.loads(row["data_json"])
+    except Exception:
+        data = {}
+    return {"date": row["date"], "data": data, "created_at": row["created_at"]}
+
+
+def save_portfolio_snapshot(date: str, rows: list, summary: dict) -> int:
+    """포트폴리오 수익률 스냅샷 저장 (날짜당 1개, UPSERT)"""
+    rows_json    = json.dumps(rows, ensure_ascii=False)
+    summary_json = json.dumps(summary, ensure_ascii=False)
+    with _connect() as conn:
+        cur = conn.execute(
+            """INSERT INTO portfolio_snapshots (date, rows_json, summary_json)
+               VALUES (?, ?, ?)
+               ON CONFLICT(date) DO UPDATE SET
+                 rows_json    = excluded.rows_json,
+                 summary_json = excluded.summary_json,
+                 created_at   = datetime('now', 'localtime')""",
+            (date, rows_json, summary_json),
+        )
+        return cur.lastrowid
+
+
+def get_portfolio_snapshot_latest() -> dict | None:
+    """가장 최근 포트폴리오 스냅샷 반환"""
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT date, rows_json, summary_json, created_at FROM portfolio_snapshots ORDER BY date DESC LIMIT 1"
+        ).fetchone()
+    if not row:
+        return None
+    try:
+        rows    = json.loads(row["rows_json"])
+        summary = json.loads(row["summary_json"])
+    except Exception:
+        rows, summary = [], {}
+    return {"date": row["date"], "rows": rows, "summary": summary, "created_at": row["created_at"]}
+
+
+# ── 뉴스 기사 ────────────────────────────────────────────────────────────
+
+def save_news_articles(articles: list[dict]) -> int:
+    """뉴스 기사 일괄 UPSERT (url UNIQUE). 저장 건수 반환."""
+    if not articles:
+        return 0
+    saved = 0
+    with _connect() as conn:
+        for a in articles:
+            try:
+                conn.execute(
+                    """INSERT INTO news_articles
+                       (source, source_name, source_type, category, title, url,
+                        description, published_at, sentiment, tags)
+                       VALUES (?,?,?,?,?,?,?,?,?,?)
+                       ON CONFLICT(url) DO NOTHING""",
+                    (a.get('source',''), a.get('source_name',''), a.get('source_type',''),
+                     a.get('category',''), a.get('title',''), a.get('url',''),
+                     a.get('description',''), a.get('published_at',''),
+                     a.get('sentiment','중립'), a.get('tags','[]')),
+                )
+                if conn.execute("SELECT changes()").fetchone()[0]:
+                    saved += 1
+            except Exception:
+                pass
+    return saved
+
+
+def get_news_articles(days: int = 7, source_type: str = None,
+                      category: str = None, limit: int = 100) -> list[dict]:
+    """최근 N일 뉴스 기사 조회 (최신순)."""
+    with _connect() as conn:
+        conds = [f"published_at >= datetime('now', '-{days} days')"]
+        params: list = []
+        if source_type and source_type != 'all':
+            conds.append("source_type = ?")
+            params.append(source_type)
+        if category and category != 'all':
+            conds.append("category = ?")
+            params.append(category)
+        where = ' AND '.join(conds)
+        limit = max(1, min(limit, 500))
+        rows = conn.execute(
+            f"SELECT * FROM news_articles WHERE {where} ORDER BY published_at DESC LIMIT {limit}",
+            params,
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def save_news_analysis(date: str, analysis: dict) -> int:
+    """Claude 일일 분석 저장 (UPSERT)."""
+    analysis_json = json.dumps(analysis, ensure_ascii=False)
+    with _connect() as conn:
+        cur = conn.execute(
+            """INSERT INTO news_analysis (date, analysis_json)
+               VALUES (?, ?)
+               ON CONFLICT(date) DO UPDATE SET
+                 analysis_json = excluded.analysis_json,
+                 created_at    = datetime('now', 'localtime')""",
+            (date, analysis_json),
+        )
+        return cur.lastrowid
+
+
+def get_news_analysis_latest() -> dict | None:
+    """가장 최근 Claude 뉴스 분석 반환."""
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT date, analysis_json, created_at FROM news_analysis ORDER BY date DESC LIMIT 1"
+        ).fetchone()
+    if not row:
+        return None
+    try:
+        analysis = json.loads(row['analysis_json'])
+    except Exception:
+        analysis = {}
+    return {'date': row['date'], 'analysis': analysis, 'created_at': row['created_at']}
+
+
+def save_news_backfill_log(week: str, article_count: int, analyzed: int = 0) -> None:
+    """백필 진행 로그 저장."""
+    with _connect() as conn:
+        conn.execute(
+            """INSERT INTO news_backfill_log (week, article_count, analyzed)
+               VALUES (?, ?, ?)
+               ON CONFLICT(week) DO UPDATE SET
+                 article_count = excluded.article_count,
+                 analyzed      = excluded.analyzed""",
+            (week, article_count, analyzed),
+        )
+
+
+def get_news_backfill_status() -> dict:
+    """백필 진행 현황 반환."""
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT week, article_count, analyzed FROM news_backfill_log ORDER BY week ASC"
+        ).fetchall()
+        total_articles = conn.execute("SELECT COUNT(*) FROM news_articles").fetchone()[0]
+    done_weeks = {r['week'] for r in rows}
+    return {
+        'done_weeks':    done_weeks,
+        'week_count':    len(rows),
+        'total_articles': total_articles,
+        'weeks':         [dict(r) for r in rows],
+    }
+
+
+# ── 전쟁지표 ─────────────────────────────────────────────────────────────
+
+def save_war_indicators(date: str, data: dict) -> int:
+    """전쟁지표 스냅샷 저장 (날짜당 1개, UPSERT)"""
+    data_json = json.dumps(data, ensure_ascii=False)
+    with _connect() as conn:
+        cur = conn.execute(
+            """INSERT INTO war_indicators (date, data_json)
+               VALUES (?, ?)
+               ON CONFLICT(date) DO UPDATE SET
+                 data_json  = excluded.data_json,
+                 created_at = datetime('now', 'localtime')""",
+            (date, data_json),
+        )
+        return cur.lastrowid
+
+
+def get_war_indicators_latest() -> dict | None:
+    """가장 최근 전쟁지표 스냅샷 반환"""
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT date, data_json, created_at FROM war_indicators ORDER BY date DESC LIMIT 1"
+        ).fetchone()
+    if not row:
+        return None
+    try:
+        data = json.loads(row["data_json"])
+    except Exception:
+        data = {}
+    return {"date": row["date"], "data": data, "created_at": row["created_at"]}
+
+
+def get_war_indicators(days: int = 30) -> list[dict]:
+    """최근 N일 전쟁지표 스냅샷 반환"""
+    with _connect() as conn:
+        rows = conn.execute(
+            """SELECT date, data_json, created_at
+               FROM war_indicators
+               WHERE date >= date('now', ? || ' days')
+               ORDER BY date ASC""",
+            (f"-{days}",),
+        ).fetchall()
+    result = []
+    for row in rows:
+        try:
+            data = json.loads(row["data_json"])
+        except Exception:
+            data = {}
+        result.append({"date": row["date"], "data": data, "created_at": row["created_at"]})
+    return result
+
