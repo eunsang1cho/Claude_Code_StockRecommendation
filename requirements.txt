@@ -1,6 +1,7 @@
 pykrx
 pandas
 numpy
+pandas-ta
 APScheduler>=3.10
 requests
 beautifulsoup4

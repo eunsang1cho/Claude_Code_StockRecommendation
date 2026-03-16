@@ -52,6 +52,12 @@ STATUS_THRESHOLDS = {
     'btc':         lambda v: _status_below(v, [(55000,'위험'),(70000,'경고'),(85000,'관망')],
                              default='긍정' if v < 95000 else '최상'),
     'nasdaq':      None,  # MoM 변화율로 계산 — fetch_yahoo_all에서 직접 처리
+    # CMS 연동 지표
+    'brent':       lambda v: _status_above(v, [(95,'위험'),(85,'경고'),(75,'관망'),(65,'긍정')]),
+    'dxy':         lambda v: _status_above(v, [(108,'위험'),(105,'경고'),(102,'관망'),(99,'긍정')]),
+    'ust2y':       lambda v: _status_above(v, [(5.0,'위험'),(4.5,'경고'),(4.0,'관망'),(3.5,'긍정')]),
+    'kre':         None,  # MoM 변화율로 계산
+    'xlf':         None,  # MoM 변화율로 계산
 }
 
 
@@ -66,11 +72,23 @@ YAHOO_SYMBOLS = {
     'vix':     '^VIX',     # CBOE 변동성 (공포 지표)
     'nasdaq':  '^IXIC',    # 나스닥 종합
     'gold':    'GC=F',     # 금 선물
+    # CMS 연동 지표
+    'brent':   'BZ=F',     # 브렌트 원유
+    'dxy':     'DX-Y.NYB', # 달러 인덱스
+    'kre':     'KRE',      # 미국 지역은행 ETF (MoM)
+    'xlf':     'XLF',      # 미국 금융섹터 ETF (MoM)
 }
 
-def _yahoo_latest(symbol: str) -> float | None:
+def _yahoo_latest(symbol: str, realtime: bool = False) -> float | None:
+    """Yahoo Finance chart API로 최신 가격 수집.
+    realtime=True  → interval=5m, range=1d  (장중 현재가)
+    realtime=False → interval=1d, range=5d  (일봉 종가)
+    """
     url = f'https://query1.finance.yahoo.com/v8/finance/chart/{symbol}'
-    params = {'interval': '1d', 'range': '5d'}
+    if realtime:
+        params = {'interval': '5m', 'range': '1d'}
+    else:
+        params = {'interval': '1d', 'range': '5d'}
     headers = {'User-Agent': 'Mozilla/5.0 (compatible; StockBot/1.0)'}
     try:
         r = requests.get(url, params=params, headers=headers, timeout=12)
@@ -82,6 +100,83 @@ def _yahoo_latest(symbol: str) -> float | None:
     except Exception as e:
         print(f'[Yahoo] {symbol} 오류: {e}')
     return None
+
+
+
+def fetch_yahoo_realtime() -> dict:
+    """실시간 탭용 — interval=5m/range=1d 로 장중 현재가 수집.
+    fetch_yahoo_all() 과 동일 구조 반환.
+    """
+    # 히스토리(1개월 비교) 필요 심볼은 일봉 유지
+    hist_keys = {'nasdaq', 'kre', 'xlf'}
+
+    result = {}
+    for key, sym in YAHOO_SYMBOLS.items():
+        if key in hist_keys:
+            closes = _yahoo_history(sym, '1mo')
+            if not closes:
+                continue
+            v = round(closes[-1], 2)
+            if key == 'nasdaq':
+                v_r, status = _nasdaq_status(closes)
+                pct = (v_r - closes[0]) / closes[0] * 100
+                result[key] = {'value': v_r, 'status': status, 'note': f'나스닥 {v_r:,.0f} (1개월 {pct:+.1f}%)'}
+            else:
+                pct = round((v - closes[0]) / closes[0] * 100, 1)
+                if pct >= 10: status = '최상'
+                elif pct >= 4: status = '긍정'
+                elif pct >= 0: status = '관망'
+                elif pct >= -5: status = '경고'
+                else: status = '위험'
+                label = 'KRE 지역은행' if key == 'kre' else 'XLF 금융'
+                result[key] = {'value': v, 'status': status, 'note': f'{label} ${v:.2f} (1개월 {pct:+.1f}%)'}
+        else:
+            # 5분봉 장중 현재가
+            price = _yahoo_latest(sym, realtime=True)
+            if price is None:
+                continue
+            if key == 'usd_krw':
+                v = round(price, 0)
+            elif key == 'btc':
+                v = round(price, 0)
+            elif key == 'gold':
+                v = round(price, 1)
+            elif key == 'brent':
+                v = round(price, 1)
+            elif key == 'dxy':
+                v = round(price, 2)
+            else:
+                v = round(price, 2)
+
+            status_fn = STATUS_THRESHOLDS.get(key)
+            note = ''
+            if key == 'btc':
+                note = f'BTC ${v:,.0f}'
+            elif key == 'vix':
+                note = f'VIX {v:.1f} ({"극도공포" if v>=30 else "공포" if v>=20 else "중립" if v>=15 else "낮음"})'
+            elif key == 'gold':
+                note = f'금 ${v:,.1f}/oz'
+            elif key == 'brent':
+                note = f'브렌트 ${v:.1f}/배럴'
+            elif key == 'dxy':
+                note = f'달러 인덱스 {v:.2f}'
+            elif key == 'usd_krw':
+                note = f'원/달러 {v:,.0f}원'
+            elif key == 'us10y':
+                note = f'미 국채 10년 {v:.3f}%'
+            elif key == 'wti':
+                note = f'WTI ${v:.2f}/배럴'
+            elif key == 'soxx':
+                note = f'SOXX ${v:.2f}'
+
+            result[key] = {
+                'value':  v,
+                'status': status_fn(v) if status_fn else None,
+                'note':   note,
+            }
+        time.sleep(0.2)
+
+    return result
 
 
 def _yahoo_history(symbol: str, range_: str = '1mo') -> list[float]:
@@ -133,6 +228,28 @@ def fetch_yahoo_all() -> dict:
             time.sleep(0.3)
             continue
 
+        if key in ('kre', 'xlf'):
+            closes = _yahoo_history(sym, '1mo')
+            if not closes:
+                result[key] = {}
+                continue
+            v = round(closes[-1], 2)
+            month_ago = closes[0]
+            pct = round((v - month_ago) / month_ago * 100, 1)
+            if   pct >= 10: status = '최상'
+            elif pct >= 4:  status = '긍정'
+            elif pct >= 0:  status = '관망'
+            elif pct >= -5: status = '경고'
+            else:           status = '위험'
+            label = 'KRE 지역은행' if key == 'kre' else 'XLF 금융'
+            result[key] = {
+                'value':  v,
+                'status': status,
+                'note':   f'{label} ${v:.2f} (1개월 {pct:+.1f}%)',
+            }
+            time.sleep(0.3)
+            continue
+
         v = _yahoo_latest(sym)
         if v is None:
             result[key] = {}
@@ -143,6 +260,10 @@ def fetch_yahoo_all() -> dict:
             v = round(v, 0)
         elif key == 'gold':
             v = round(v, 1)
+        elif key == 'brent':
+            v = round(v, 1)
+        elif key == 'dxy':
+            v = round(v, 2)
         status_fn = STATUS_THRESHOLDS.get(key)
         note = ''
         if key == 'btc':
@@ -151,6 +272,10 @@ def fetch_yahoo_all() -> dict:
             note = f'VIX {v:.1f} ({"극도공포" if v>=30 else "공포" if v>=20 else "중립" if v>=15 else "낮음"})'
         elif key == 'gold':
             note = f'금 ${v:,.1f}/oz'
+        elif key == 'brent':
+            note = f'브렌트 ${v:.1f}/배럴'
+        elif key == 'dxy':
+            note = f'달러 인덱스 {v:.2f}'
         result[key] = {
             'value':  v,
             'status': status_fn(v) if status_fn else None,
@@ -167,6 +292,7 @@ FRED_SERIES = {
     'hy_spread':   'BAMLH0A0HYM2',  # ICE BofA HY OAS (%)
     'rrp':         'RRPONTSYD',      # Overnight RRP (B$)
     'yield_curve': 'T10Y2Y',         # 10Y-2Y 금리차 (%)
+    'ust2y':       'DGS2',           # 미국 2년 국채 금리 (%)
 }
 
 # MMF 주간 시리즈 후보 (순서대로 시도)
@@ -241,6 +367,12 @@ def fetch_fred_all(api_key: str) -> dict:
         return {}
     result = {}
 
+    _FRED_NOTE = {
+        'hy_spread':   lambda v: f'HY 스프레드 {v:.2f}%',
+        'ust2y':       lambda v: f'미 국채 2년 {v:.2f}%',
+        'yield_curve': lambda v: f'10Y-2Y {v:+.2f}%',
+    }
+
     # 일반 FRED 시리즈
     for key, series in FRED_SERIES.items():
         v = _fred_latest(series, api_key)
@@ -250,10 +382,11 @@ def fetch_fred_all(api_key: str) -> dict:
             continue
         v = round(v, 2)
         status_fn = STATUS_THRESHOLDS.get(key)
+        note_fn   = _FRED_NOTE.get(key)
         result[key] = {
             'value':  v,
             'status': status_fn(v) if status_fn else None,
-            'note':   '',
+            'note':   note_fn(v) if note_fn else '',
         }
         time.sleep(0.3)
 
@@ -333,168 +466,16 @@ def fetch_fear_greed() -> dict:
 # ── pykrx 외국인 수급 ─────────────────────────────────────────────────
 
 def fetch_foreign_flow() -> dict:
-    """KOSPI 외국인 당일 순매수 (억원)"""
-    try:
-        from pykrx import stock
-        today = datetime.now()
-        # 장 마감 전이면 전일 데이터
-        for delta in range(0, 5):
-            d = (today - timedelta(days=delta)).strftime('%Y%m%d')
-            try:
-                df = stock.get_market_trading_value_by_investor(d, d, 'KOSPI')
-                if df.empty:
-                    continue
-                # 외국인 행 찾기
-                for label in ['외국인합계', '외국인', 'Foreigner']:
-                    if label in df.index:
-                        net_won = int(df.loc[label, '순매수'])
-                        net_eok = round(net_won / 1e8, 0)
-                        status = STATUS_THRESHOLDS['foreign_flow'](net_won)
-                        return {
-                            'value':  net_eok,
-                            'status': status,
-                            'note':   f'KOSPI 외국인 순매수 {net_eok:+,.0f}억원 ({d})',
-                        }
-            except Exception:
-                continue
-    except Exception as e:
-        print(f'[pykrx] 외국인 수급 오류: {e}')
+    """KOSPI 외국인 당일 순매수 (억원) — KRX API 키 발급 후 활성화 예정"""
+    # TODO: KRX Open API 키 발급 후 구현
+    # os.getenv('KRX_API_KEY') 사용
     return {}
-
-
-# ── Claude 정성 지표 분석 ──────────────────────────────────────────────
-
-QUALITATIVE_KEYS = ['tariff', 'commercial_law', 'fund_flow', 'semiconductor', 'ria', 'msci', 'tga_mmf_status']
-
-QUALITATIVE_PROMPTS = {
-    'tariff':         '미국 트럼프 행정부의 대한국/글로벌 관세 정책 현황과 한국 증시 위험도',
-    'commercial_law': '한국 상법 개정(자사주 소각 의무화 등) 현황과 증시 영향',
-    'fund_flow':      '한국 증시 자금 흐름: 부동산 규제 반사이익, 정책 펀드 자금 유입',
-    'semiconductor':  '삼성전자·SK하이닉스 실적 전망 및 반도체 섹터 모멘텀',
-    'ria':            'RIA(해외주식 복귀계좌) 양도세 감면 정책 현황과 자금 유입 효과',
-    'msci':           'MSCI 선진국 지수 편입 추진 현황',
-    'tga_mmf_status': '미국 TGA 잔고 추이와 MMF 유동성 방출 전망',
-}
-
-# 뉴스 수집 쿼리 (Google News RSS)
-_NEWS_QUERIES = [
-    ('트럼프 관세 한국 증시', 'tariff'),
-    ('코스피 외국인 매매 수급', 'foreign'),
-    ('한국 상법 개정 자사주', 'commercial_law'),
-    ('삼성전자 SK하이닉스 실적', 'semiconductor'),
-    ('MMF TGA 미국 유동성', 'liquidity'),
-]
-
-
-def _fetch_news_context() -> str:
-    """Google News RSS에서 최근 뉴스 헤드라인 수집 — Claude 분석 컨텍스트용"""
-    from xml.etree import ElementTree as ET
-    headlines = []
-    for query, tag in _NEWS_QUERIES:
-        try:
-            url = 'https://news.google.com/rss/search'
-            params = {'q': query, 'hl': 'ko', 'gl': 'KR', 'ceid': 'KR:ko'}
-            r = requests.get(url, params=params,
-                             headers={'User-Agent': 'Mozilla/5.0 StockBot/1.0'},
-                             timeout=8)
-            if not r.ok:
-                continue
-            root = ET.fromstring(r.content)
-            for item in root.findall('.//item')[:3]:
-                title = item.find('title')
-                pub   = item.find('pubDate')
-                if title is not None and title.text:
-                    date_part = (pub.text or '')[:16] if pub is not None else ''
-                    headlines.append(f'[{tag}] {title.text[:120]} ({date_part})')
-        except Exception as e:
-            print(f'[뉴스] {query} 오류: {e}')
-        time.sleep(0.15)
-    return '\n'.join(headlines) if headlines else '(뉴스 수집 실패)'
-
-
-def fetch_qualitative(claude_api_key: str, existing: dict) -> dict:
-    """
-    Claude로 정성 지표 상태 분석 + 시나리오 확률 계산.
-    Google News 헤드라인을 컨텍스트로 제공하여 최신 분위기 반영.
-    existing = 기존 저장된 상태값 (폴백용)
-    반환: {QUALITATIVE_KEY: {status, note}, ..., 'scenarios': [...]}
-    """
-    if not claude_api_key:
-        return {k: existing.get(k, {}) for k in QUALITATIVE_KEYS}
-
-    try:
-        import anthropic
-        client = anthropic.Anthropic(api_key=claude_api_key)
-    except Exception as e:
-        print(f'[Claude] 클라이언트 생성 실패: {e}')
-        return {k: existing.get(k, {}) for k in QUALITATIVE_KEYS}
-
-    today = datetime.now().strftime('%Y년 %m월 %d일')
-    print('[Claude] 뉴스 헤드라인 수집 중...')
-    news_ctx = _fetch_news_context()
-
-    items_text = '\n'.join(f'- {k}: {v}' for k, v in QUALITATIVE_PROMPTS.items())
-
-    prompt = f"""오늘({today}) 최신 뉴스 헤드라인:
-{news_ctx}
-
-위 뉴스를 참고해 아래 항목들의 한국 증시 영향도를 평가하고,
-다음 시나리오의 현재 확률도 추정하세요.
-
-평가 항목:
-{items_text}
-
-시나리오:
-- 베이스(리스크온 리바운드): 4월말~6월 TGA/MMF 유동성 방출 + 관세 완화
-- 강세(V자 급반등): 3~5월 전쟁 리스크 빠른 해소 + SOXX 급반등
-- 약세(상승 늦림): 관세/전쟁 장기화, 크레딧 스프레드 확대, 4~8월 횡보
-
-JSON 형식으로만 답하세요:
-{{
-  "tariff":         {{"status": "위험|경고|관망|긍정|최상", "note": "한 줄 요약(뉴스 기반)"}},
-  "commercial_law": {{"status": "...", "note": "..."}},
-  "fund_flow":      {{"status": "...", "note": "..."}},
-  "semiconductor":  {{"status": "...", "note": "..."}},
-  "ria":            {{"status": "...", "note": "..."}},
-  "msci":           {{"status": "...", "note": "..."}},
-  "tga_mmf_status": {{"status": "...", "note": "..."}},
-  "scenarios": [
-    {{"name": "베이스: 4월말~6월 리스크온 리바운드", "prob": 50, "desc": "핵심 근거 한 줄"}},
-    {{"name": "강세: 3~5월 V자 급반등",              "prob": 30, "desc": "핵심 근거 한 줄"}},
-    {{"name": "약세: 4~8월 상승 늦림",               "prob": 20, "desc": "핵심 근거 한 줄"}}
-  ]
-}}
-
-status는 반드시 위험/경고/관망/긍정/최상 중 하나. scenarios의 prob 합계는 100. JSON만 출력."""
-
-    try:
-        import json, re
-        resp = client.messages.create(
-            model='claude-haiku-4-5-20251001',
-            max_tokens=900,
-            messages=[{'role': 'user', 'content': prompt}],
-        )
-        raw = resp.content[0].text
-        m = re.search(r'\{.*\}', raw, re.DOTALL)
-        if m:
-            parsed = json.loads(m.group())
-            result = {k: parsed.get(k, existing.get(k, {})) for k in QUALITATIVE_KEYS}
-            if 'scenarios' in parsed:
-                result['scenarios'] = parsed['scenarios']
-            return result
-    except Exception as e:
-        print(f'[Claude] 정성 지표 분석 오류: {e}')
-
-    return {k: existing.get(k, {}) for k in QUALITATIVE_KEYS}
 
 
 # ── 통합 수집 ─────────────────────────────────────────────────────────
 
-def fetch_all(fred_api_key: str = '', claude_api_key: str = '', existing: dict = None) -> dict:
-    """
-    모든 지표 자동 수집.
-    existing: 기존 DB 저장값 (정성 지표 폴백 + 메모 유지용)
-    """
+def fetch_all(fred_api_key: str = '', existing: dict = None) -> dict:
+    """모든 지표 자동 수집."""
     existing = existing or {}
     print('[지표] Yahoo Finance 수집 중...')
     data = fetch_yahoo_all()
@@ -503,6 +484,8 @@ def fetch_all(fred_api_key: str = '', claude_api_key: str = '', existing: dict =
     ff = fetch_foreign_flow()
     if ff:
         data['foreign_flow'] = ff
+    elif existing.get('foreign_flow'):
+        data['foreign_flow'] = existing['foreign_flow']
 
     print('[지표] Fear & Greed 수집 중...')
     fg = fetch_fear_greed()
@@ -515,29 +498,12 @@ def fetch_all(fred_api_key: str = '', claude_api_key: str = '', existing: dict =
     else:
         print('[지표] FRED_API_KEY 없음 — HY/RRP/TGA/10Y-2Y/MMF 건너뜀')
 
-    print('[지표] 정성 지표 분석 중...')
-    qualitative = fetch_qualitative(claude_api_key, existing)
-    for k, v in qualitative.items():
-        if not v:
-            continue
-        if k == 'scenarios':
-            data['scenarios'] = v   # Claude가 계산한 시나리오 확률
-            continue
-        old_note = existing.get(k, {}).get('note', '')
-        data[k] = {**v, 'note': v.get('note') or old_note}
-
-    # Claude가 시나리오를 못 돌려줬으면 기존 것 유지
-    if 'scenarios' not in data and 'scenarios' in existing:
-        data['scenarios'] = existing['scenarios']
-
     # F&G 내부 히스토리 데이터는 저장 대상 아님 — 제거
     if 'fear_greed' in data:
         data['fear_greed'].pop('_historical', None)
 
     # 기존 값에서 note 보정 (수동 메모 유지)
     for k in list(data.keys()):
-        if k == 'scenarios':
-            continue
         if not data[k].get('note') and existing.get(k, {}).get('note'):
             data[k]['note'] = existing[k]['note']
 

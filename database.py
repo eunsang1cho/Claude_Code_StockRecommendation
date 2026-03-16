@@ -88,6 +88,34 @@ _DEFAULT_CONFIGS: dict[str, dict] = {
         "conf_big15": 8,              # 장대 +15% 이상 시 가산점
         "conf_near_ma20": 7,          # 현재가 MA20 1% 이내 시 가산점
     },
+    "텐배거": {
+        # ── STEP 1: 시장 리더 ──────────────────────────────────────
+        "rs_6m_min":          0.20,   # 6개월 절대 수익률 최소 (RS 80퍼센타일 프록시)
+        "rs_3m_min":          0.10,   # 3개월 절대 수익률 최소 (RS 70퍼센타일 프록시)
+        # ── STEP 2: VCP 베이스 ─────────────────────────────────────
+        "big_move_pct":       0.35,   # 120일 저점 대비 최소 상승폭 (35%)
+        "big_move_lookback":  120,    # 저점 탐색 기간 (거래일)
+        "base_days_min":      10,     # 베이스 최소 기간 (거래일)
+        "base_days_max":      35,     # 베이스 최대 기간 (거래일)
+        "base_range_pct":     0.12,   # 베이스 허용 등락폭 (12%)
+        "atr_contract":       0.75,   # ATR20_현재 / ATR20_이전 최대 비율
+        "vol_contract":       0.70,   # vol10 / vol50 최대 비율 (거래량 수축 기준)
+        # ── STEP 3: 위치 ───────────────────────────────────────────
+        "high52w_ratio":      0.90,   # 현재가 ≥ 52주 고점 × N
+        "high60d_ratio":      0.92,   # 현재가 ≥ 60일 고점 × N
+        "ma20_near_tol":      0.04,   # MA20 근접 허용 오차 (±4%)
+        "ma50_near_tol":      0.06,   # MA50 근접 허용 오차 (±6%)
+        # ── STEP 4: 돌파 트리거 ────────────────────────────────────
+        "brkout_vol_mult":    1.8,    # 베이스 상단 돌파 거래량 배수 (vol50 대비)
+        "brkout52w_vol_mult": 1.5,    # 52주 신고가 돌파 거래량 배수
+        # ── 신뢰도 ─────────────────────────────────────────────────
+        "conf_base":          70,     # 기본 신뢰도
+        "conf_breakout":      18,     # 거래량 동반 돌파 확인 시 가산점
+        "conf_atr_strong":    8,      # ATR 40%+ 수축 시 가산점
+        "conf_vol_strong":    7,      # vol10/vol50 < 0.50 극도 수축 시 가산점
+        "conf_near_ma20":     6,      # 현재가 MA20 2% 이내 시 가산점
+        "conf_big50":         5,      # 120일 저점 대비 50%+ 상승 시 가산점
+    },
 }
 
 _PARAM_DOCS: dict[str, dict[str, str]] = {
@@ -162,6 +190,29 @@ _PARAM_DOCS: dict[str, dict[str, str]] = {
         "conf_ma20_close":       "MA20이 장대 저가 1% 이내 시 가산점 (기본: 10)",
         "conf_big15":            "장대 +15% 이상 시 가산점 (기본: 8)",
         "conf_near_ma20":        "현재가 MA20 1% 이내 시 가산점 (기본: 7)",
+    },
+    "텐배거": {
+        "rs_6m_min":          "6개월 절대 수익률 최소값, RS 80퍼센타일 프록시 (기본: 0.20 = 20%)",
+        "rs_3m_min":          "3개월 절대 수익률 최소값, RS 70퍼센타일 프록시 (기본: 0.10 = 10%)",
+        "big_move_pct":       "120일 저점 대비 최소 상승폭, VCP 트리거 (기본: 0.35 = 35%)",
+        "big_move_lookback":  "저점 탐색 기간, 거래일 (기본: 120)",
+        "base_days_min":      "베이스 최소 기간, 거래일 (기본: 10)",
+        "base_days_max":      "베이스 최대 기간, 거래일 (기본: 35)",
+        "base_range_pct":     "베이스 허용 등락폭 (기본: 0.12 = 12%)",
+        "atr_contract":       "ATR20_현재 / ATR20_이전 최대 비율, 변동성 수축 기준 (기본: 0.75)",
+        "vol_contract":       "vol10 / vol50 최대 비율, 거래량 수축 기준 (기본: 0.70)",
+        "high52w_ratio":      "현재가 ≥ 52주 고점 × N 최소 위치 (기본: 0.90)",
+        "high60d_ratio":      "현재가 ≥ 60일 고점 × N 최소 위치 (기본: 0.92)",
+        "ma20_near_tol":      "MA20 근접 허용 오차 (기본: 0.04 = ±4%)",
+        "ma50_near_tol":      "MA50 근접 허용 오차 (기본: 0.06 = ±6%)",
+        "brkout_vol_mult":    "베이스 상단 돌파 거래량 배수, vol50 대비 (기본: 1.8)",
+        "brkout52w_vol_mult": "52주 신고가 돌파 거래량 배수 (기본: 1.5)",
+        "conf_base":          "기본 신뢰도 점수 (기본: 70)",
+        "conf_breakout":      "거래량 동반 돌파 확인 시 가산점 (기본: 18)",
+        "conf_atr_strong":    "ATR 40%+ 수축 시 가산점 (기본: 8)",
+        "conf_vol_strong":    "vol10/vol50 < 0.50 극도 수축 시 가산점 (기본: 7)",
+        "conf_near_ma20":     "현재가 MA20 2% 이내 시 가산점 (기본: 6)",
+        "conf_big50":         "120일 저점 대비 50%+ 상승 시 가산점 (기본: 5)",
     },
 }
 
@@ -287,6 +338,26 @@ def init_db() -> None:
                 created_at   TEXT DEFAULT (datetime('now', 'localtime'))
             );
 
+            CREATE TABLE IF NOT EXISTS cms_snapshots (
+                id             INTEGER PRIMARY KEY AUTOINCREMENT,
+                date           TEXT NOT NULL,
+                time_slot      TEXT NOT NULL DEFAULT 'morning',
+                cms_score      REAL NOT NULL,
+                regime         TEXT NOT NULL,
+                components_json TEXT NOT NULL,
+                created_at     TEXT DEFAULT (datetime('now', 'localtime')),
+                UNIQUE(date, time_slot)
+            );
+
+            CREATE TABLE IF NOT EXISTS lotto_recommendations (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                week_no     INTEGER NOT NULL,
+                created_at  TEXT NOT NULL,
+                games_json  TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_lotto_rec_week ON lotto_recommendations(week_no);
+            CREATE INDEX IF NOT EXISTS idx_cms_date ON cms_snapshots(date);
             CREATE INDEX IF NOT EXISTS idx_war_date ON war_indicators(date);
             CREATE INDEX IF NOT EXISTS idx_news_pub ON news_articles(published_at);
             CREATE INDEX IF NOT EXISTS idx_news_type ON news_articles(source_type);
@@ -867,6 +938,21 @@ def get_war_indicators_latest() -> dict | None:
     return {"date": row["date"], "data": data, "created_at": row["created_at"]}
 
 
+def get_war_indicators_prev() -> dict | None:
+    """직전 전쟁지표 스냅샷 반환 (최신 제외 2번째)"""
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT date, data_json FROM war_indicators ORDER BY date DESC LIMIT 2"
+        ).fetchall()
+    if len(row) < 2:
+        return None
+    try:
+        data = json.loads(row[1]["data_json"])
+    except Exception:
+        data = {}
+    return {"date": row[1]["date"], "data": data}
+
+
 def get_war_indicators(days: int = 30) -> list[dict]:
     """최근 N일 전쟁지표 스냅샷 반환"""
     with _connect() as conn:
@@ -886,3 +972,103 @@ def get_war_indicators(days: int = 30) -> list[dict]:
         result.append({"date": row["date"], "data": data, "created_at": row["created_at"]})
     return result
 
+
+# ── CMS 스냅샷 ─────────────────────────────────────────────────────────
+
+def save_cms_snapshot(date: str, time_slot: str, cms_score: float,
+                      regime: str, components: dict) -> int:
+    """CMS 스냅샷 저장 (날짜+슬롯당 1개, UPSERT)"""
+    comp_json = json.dumps(components, ensure_ascii=False)
+    with _connect() as conn:
+        existing = conn.execute(
+            "SELECT id FROM cms_snapshots WHERE date=? AND time_slot=?",
+            (date, time_slot),
+        ).fetchone()
+        if existing:
+            conn.execute(
+                """UPDATE cms_snapshots
+                   SET cms_score=?, regime=?, components_json=?,
+                       created_at=datetime('now','localtime')
+                   WHERE date=? AND time_slot=?""",
+                (cms_score, regime, comp_json, date, time_slot),
+            )
+            return existing["id"]
+        cur = conn.execute(
+            """INSERT INTO cms_snapshots (date, time_slot, cms_score, regime, components_json)
+               VALUES (?,?,?,?,?)""",
+            (date, time_slot, cms_score, regime, comp_json),
+        )
+        return cur.lastrowid
+
+
+def get_cms_latest() -> dict | None:
+    """가장 최근 CMS 스냅샷 반환"""
+    with _connect() as conn:
+        row = conn.execute(
+            """SELECT date, time_slot, cms_score, regime, components_json, created_at
+               FROM cms_snapshots ORDER BY created_at DESC LIMIT 1"""
+        ).fetchone()
+    if not row:
+        return None
+    try:
+        components = json.loads(row["components_json"])
+    except Exception:
+        components = {}
+    return {
+        "date":       row["date"],
+        "time_slot":  row["time_slot"],
+        "cms_score":  row["cms_score"],
+        "regime":     row["regime"],
+        "components": components,
+        "created_at": row["created_at"],
+    }
+
+
+def get_cms_history(days: int = 30) -> list[dict]:
+    """최근 N일 CMS 스냅샷 (모든 슬롯 포함, 오래된→최신 순)"""
+    with _connect() as conn:
+        rows = conn.execute(
+            """SELECT date, time_slot, cms_score, regime, components_json, created_at
+               FROM cms_snapshots
+               WHERE date >= date('now', ? || ' days')
+               ORDER BY date ASC, created_at ASC""",
+            (f"-{days}",),
+        ).fetchall()
+    result = []
+    for row in rows:
+        try:
+            components = json.loads(row["components_json"])
+        except Exception:
+            components = {}
+        result.append({
+            "date":       row["date"],
+            "time_slot":  row["time_slot"],
+            "cms_score":  row["cms_score"],
+            "regime":     row["regime"],
+            "components": components,
+            "created_at": row["created_at"],
+        })
+    return result
+
+
+
+# ── 로또 추천번호 저장/조회 ───────────────────────────────────────────
+
+def save_lotto_recommendations(week_no: int, games: list) -> None:
+    """금요일 추천 번호 저장 (week_no = 다음 회차 번호)"""
+    now = datetime.now().isoformat(timespec="seconds")
+    with _connect() as conn:
+        conn.execute(
+            "INSERT INTO lotto_recommendations (week_no, created_at, games_json) VALUES (?, ?, ?)",
+            (week_no, now, json.dumps(games, ensure_ascii=False)),
+        )
+
+
+def get_lotto_recommendation(week_no: int) -> list | None:
+    """특정 회차 추천번호 조회. 없으면 None."""
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT games_json FROM lotto_recommendations WHERE week_no = ? ORDER BY id DESC LIMIT 1",
+            (week_no,),
+        ).fetchone()
+    return json.loads(row["games_json"]) if row else None

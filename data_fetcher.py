@@ -37,9 +37,11 @@ def _fetch_candidates(days_back: int = 70, min_pct: float = 15.0) -> list[str]:
     """
     날짜별 전체 종목 데이터를 일괄 수집해 장대양봉 후보를 추출.
     하루에 2번 호출(KOSPI/KOSDAQ)이므로 days_back * 2 회 API 호출.
+    KRX 배치 API 실패 시 로컬 DB 폴백.
     """
     today = datetime.now()
     big_tickers: set[str] = set()
+    batch_success = False
 
     # 시총 5조↓ 종목 집합 (오늘 기준)
     small_cap_set = _get_small_cap_set()
@@ -52,6 +54,8 @@ def _fetch_candidates(days_back: int = 70, min_pct: float = 15.0) -> list[str]:
                 df = stock.get_market_ohlcv_by_ticker(date_str, market=market)
                 if df.empty:
                     continue
+                if "시가" not in df.columns:
+                    continue
 
                 df = df[df["시가"] > 0].copy()
                 df["_pct"] = (df["종가"] - df["시가"]) / df["시가"] * 100
@@ -61,12 +65,62 @@ def _fetch_candidates(days_back: int = 70, min_pct: float = 15.0) -> list[str]:
                 if small_cap_set:
                     big = [t for t in big if t in small_cap_set]
                 big_tickers.update(big)
+                batch_success = True
             except Exception:
                 pass
 
             time.sleep(0.15)
 
+    if not batch_success or not big_tickers:
+        # KRX 배치 API 불가 → 로컬 DB 기반 폴백
+        print("⚠️  KRX 배치 API 응답 없음 → 로컬 DB 폴백 모드")
+        big_tickers = _fetch_candidates_local(days_back, min_pct)
+
     return list(big_tickers)
+
+
+def _fetch_candidates_local(days_back: int = 70, min_pct: float = 15.0) -> set[str]:
+    """
+    KRX 배치 API 실패 시 폴백:
+    1) market_data.db에서 최근 N일 내 장대양봉 종목 추출
+    2) scan_results 이력 종목 추가 (과거 감지 종목은 계속 모니터링)
+    """
+    import sqlite3
+
+    big_tickers: set[str] = set()
+    cutoff = (datetime.now() - timedelta(days=days_back)).strftime("%Y%m%d")
+
+    # 1. market_data.db 로컬 OHLCV → 장대양봉 조건
+    mdb = os.path.join(DIR, "market_data.db")
+    if os.path.exists(mdb):
+        try:
+            conn = sqlite3.connect(mdb)
+            rows = conn.execute(
+                """SELECT DISTINCT ticker FROM stock_daily
+                   WHERE date >= ? AND open > 0
+                     AND CAST(close - open AS REAL) / open * 100 >= ?""",
+                (cutoff, min_pct),
+            ).fetchall()
+            conn.close()
+            big_tickers.update(r[0] for r in rows)
+        except Exception:
+            pass
+
+    # 2. scan_results 이력 종목 (과거 패턴 감지 종목)
+    sdb = os.path.join(DIR, "stocks.db")
+    if os.path.exists(sdb):
+        try:
+            conn = sqlite3.connect(sdb)
+            rows = conn.execute(
+                "SELECT DISTINCT ticker FROM scan_results"
+            ).fetchall()
+            conn.close()
+            big_tickers.update(r[0] for r in rows)
+        except Exception:
+            pass
+
+    print(f"   로컬 폴백 후보: {len(big_tickers)}개")
+    return big_tickers
 
 
 def _get_small_cap_set(threshold_trillion: float = 5.0) -> set[str]:
@@ -115,7 +169,11 @@ def get_ohlcv(ticker: str, days: int = 95) -> pd.DataFrame | None:
 def get_stock_name(ticker: str) -> str:
     """종목코드 → 종목명"""
     try:
-        return stock.get_market_ticker_name(ticker)
+        name = stock.get_market_ticker_name(ticker)
+        # pykrx 버전에 따라 DataFrame/Series로 반환될 수 있으므로 str 변환
+        if hasattr(name, "iloc"):
+            name = name.iloc[0] if len(name) > 0 else ticker
+        return str(name).strip() or ticker
     except Exception:
         return ticker
 

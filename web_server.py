@@ -14,6 +14,7 @@ import anthropic
 import httpx
 from dotenv import load_dotenv
 from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse
 
 import database
@@ -23,9 +24,10 @@ from data_fetcher import get_current_price
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 load_dotenv(os.path.join(_ROOT, ".env"))
 
-_TG_TOKEN      = os.getenv("TELEGRAM_BOT_TOKEN", "")
-_TG_USER_ID    = os.getenv("TELEGRAM_USER_ID", "")
+_TG_TOKEN       = os.getenv("TELEGRAM_BOT_TOKEN", "")
+_TG_USER_ID     = os.getenv("TELEGRAM_USER_ID", "")
 _CLAUDE_API_KEY = os.getenv("CLAUDE_API_KEY", "")
+_EIA_API_KEY    = os.getenv("EIA_API_KEY", "")
 
 # 알고리즘 이름 정규화 (자유 입력 → 내부 키)
 _KNOWN_ALGOS = ["골삼이", "골든샘플", "레드삼각", "골삼이(상승초입)"]
@@ -46,6 +48,13 @@ _price_cache: dict[str, tuple[int, float]] = {}
 _CACHE_TTL = 300
 
 app = FastAPI(title="Stock Dashboard")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000"],
+    allow_methods=["GET"],
+    allow_headers=["*"],
+)
 
 
 def _normalize_algo(name: str) -> str | None:
@@ -161,7 +170,7 @@ async def _notify_telegram(request_type: str, algorithm_name: str, description: 
 async def security_headers(request: Request, call_next):
     response = await call_next(request)
     response.headers["X-Content-Type-Options"] = "nosniff"
-    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["X-Frame-Options"] = "SAMEORIGIN"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
     # 인라인 스크립트/스타일은 현재 HTML 구조상 필요 (CDN 없음, 외부 리소스 없음)
     response.headers["Content-Security-Policy"] = (
@@ -169,8 +178,8 @@ async def security_headers(request: Request, call_next):
         "script-src 'self' 'unsafe-inline'; "
         "style-src 'self' 'unsafe-inline'; "
         "img-src 'self' data:; "
-        "connect-src 'self'; "
-        "frame-ancestors 'none';"
+        "connect-src 'self' http://localhost:3000; "
+        "frame-ancestors 'self' http://localhost:3000;"
     )
     return response
 
@@ -352,11 +361,36 @@ async def api_save_daily_indicators(request: Request) -> JSONResponse:
 
 def _calc_crash_score(data: dict) -> float:
     STATUS_SCORE = {"위험": -2, "경고": -1, "관망": 0, "긍정": 1, "최상": 2}
+    # ── 학문적 근거 기반 가중치 (OFR FSI / CISS / Estrella & Mishkin 1998) ──
     WEIGHTS = {
-        "tariff": 12, "usd_krw": 15, "us10y": 10, "foreign_flow": 15,
-        "commercial_law": 5, "fund_flow": 5, "semiconductor": 5, "ria": 5, "msci": 5,
-        "wti": 12, "soxx": 8, "hy_spread": 20, "tga_mmf_status": 8,
-        "mmf_total": 8, "rrp": 5, "tga": 8, "yield_curve": 10, "fear_greed": 10,
+        # 신용/스프레드 — 최강 예측력 (Gilchrist & Zakrajsek 2012, OFR FSI)
+        "hy_spread":   20,
+        "yield_curve": 12,  # Estrella & Mishkin(1998) 경기침체 12개월 선행
+        # 변동성/심리 (Whaley 2009; Baker & Wurgler 2006)
+        "vix":         15,
+        "fear_greed":   8,
+        # 환율/달러 — 신흥국 자금이탈 척도
+        "usd_krw":     15,
+        "dxy":          7,
+        # 금리 수준
+        "us10y":       10,
+        "ust2y":        7,
+        # 은행/금융 시스템 — SVB 2023 사례 (KRE: 붕괴 3일 전 선행 하락)
+        "kre":         10,
+        "xlf":          5,
+        # 유동성
+        "mmf_total":    8,
+        "rrp":          4,
+        "tga":          4,
+        # 기술주/반도체 (경기선행지표)
+        "nasdaq":       8,
+        "soxx":         8,
+        # 원자재 (Hamilton 2011 오일쇼크 경기침체)
+        "wti":          8,
+        "brent":        5,
+        "gold":         5,
+        # 위험선호 프록시
+        "btc":          5,
     }
     wsum, wmax = 0, 0
     for k, w in WEIGHTS.items():
@@ -406,23 +440,42 @@ async def api_backfill_indicators(request: Request) -> JSONResponse:
 
 @app.get("/api/indicators/realtime")
 async def api_realtime_indicators() -> JSONResponse:
-    """Yahoo Finance + F&G + TGA 즉시 수집 — DB 저장 없음, 부하 최소"""
+    """Yahoo Finance + F&G + TGA + 외국인수급 즉시 수집 — DB 저장 없음, 부하 최소"""
     import fetch_indicators as fi
 
-    async def _yahoo(): return await asyncio.to_thread(fi.fetch_yahoo_all)
+    async def _yahoo(): return await asyncio.to_thread(fi.fetch_yahoo_realtime)
     async def _fg():
         r = await asyncio.to_thread(fi.fetch_fear_greed)
         r.pop('_historical', None)
         return r
     async def _tga(): return await asyncio.to_thread(fi._fetch_tga)
 
+    # 외국인수급: 평일 → pykrx 라이브, 주말 → DB 최근값
+    is_weekday = datetime.now().weekday() < 5
+    if is_weekday:
+        async def _ff(): return await asyncio.to_thread(fi.fetch_foreign_flow)
+    else:
+        async def _ff(): return {}
+
     try:
-        yahoo_data, fg_data, tga_val = await asyncio.gather(_yahoo(), _fg(), _tga())
+        yahoo_data, fg_data, tga_val, ff_data = await asyncio.gather(
+            _yahoo(), _fg(), _tga(), _ff()
+        )
         data = yahoo_data
         if fg_data:
             data['fear_greed'] = fg_data
         if tga_val is not None:
             data['tga'] = {'value': tga_val, 'status': '관망', 'note': f'TGA {tga_val:.1f}B$'}
+        if ff_data:
+            data['foreign_flow'] = ff_data
+        else:
+            # 주말 또는 pykrx 실패 시 DB 최근값 사용
+            hist = database.get_daily_indicators(5)
+            for row in hist:
+                ff_db = row.get('data', {}).get('foreign_flow')
+                if ff_db:
+                    data['foreign_flow'] = ff_db
+                    break
         return JSONResponse({"ok": True, "data": data, "ts": datetime.now().isoformat()})
     except Exception as e:
         return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
@@ -446,7 +499,7 @@ async def api_refresh_indicators() -> JSONResponse:
 
     try:
         data = await asyncio.to_thread(
-            fi.fetch_all, os.getenv("FRED_API_KEY", ""), _CLAUDE_API_KEY, existing
+            fi.fetch_all, os.getenv("FRED_API_KEY", ""), existing
         )
     except Exception as e:
         return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
@@ -455,6 +508,29 @@ async def api_refresh_indicators() -> JSONResponse:
     req_id = database.save_daily_indicators(today, data, crash_score, "자동 수집", time_slot)
     return JSONResponse({"ok": True, "id": req_id, "crash_score": crash_score,
                          "date": today, "time_slot": time_slot})
+
+
+@app.post("/api/daily-indicators/bg-refresh")
+async def api_bg_refresh_indicators() -> JSONResponse:
+    """지표 백그라운드 수집 — 즉시 반환, 완료는 polling으로 확인"""
+    import fetch_indicators as fi
+    today     = datetime.now().strftime("%Y-%m-%d")
+    time_slot = _get_time_slot()
+    history   = database.get_daily_indicators(1)
+    existing  = history[0]["data"] if history and history[0]["date"] == today else {}
+
+    async def _run():
+        try:
+            data = await asyncio.to_thread(
+                fi.fetch_all, os.getenv("FRED_API_KEY", ""), existing
+            )
+            crash_score = _calc_crash_score(data)
+            database.save_daily_indicators(today, data, crash_score, "자동 수집(BG)", time_slot)
+        except Exception as e:
+            print(f"[bg-refresh indicators] 오류: {e}")
+
+    asyncio.create_task(_run())
+    return JSONResponse({"ok": True, "started": True})
 
 
 @app.delete("/api/stock/{ticker}")
@@ -651,8 +727,13 @@ async def api_future_portfolio(refresh: bool = False) -> JSONResponse:
 
     try:
         rows = await asyncio.to_thread(fi.fetch_portfolio_performance)
-        total_invest  = sum(r["invest_krw"] for r in rows)
-        total_current = sum(r["current_value_krw"] for r in rows)
+        # 새 구조: rows = [{key, name, icon, us:{...}, kr:{...}}]
+        us_invest  = sum(r["us"]["invest_krw"] for r in rows)
+        us_current = sum(r["us"]["current_value_krw"] for r in rows)
+        kr_invest  = sum(r["kr"]["invest_krw"] for r in rows)
+        kr_current = sum(r["kr"]["current_value_krw"] for r in rows)
+        total_invest  = us_invest + kr_invest
+        total_current = us_current + kr_current
         total_profit  = total_current - total_invest
         total_return  = round((total_current / total_invest - 1) * 100, 2) if total_invest else 0
         summary = {
@@ -661,6 +742,8 @@ async def api_future_portfolio(refresh: bool = False) -> JSONResponse:
             "total_profit":  total_profit,
             "total_return":  total_return,
             "count":         len(rows),
+            "us_return": round((us_current / us_invest - 1) * 100, 2) if us_invest else 0,
+            "kr_return": round((kr_current / kr_invest - 1) * 100, 2) if kr_invest else 0,
         }
         today = datetime.now().strftime("%Y-%m-%d")
         database.save_portfolio_snapshot(today, rows, summary)
@@ -701,8 +784,12 @@ async def api_get_war_indicators() -> JSONResponse:
         return JSONResponse({"ok": False, "data": None, "error": f"DB 오류: {e}"})
     if not latest:
         return JSONResponse({"ok": False, "data": None, "error": "데이터 없음 — 새로고침으로 수집하세요"})
+    # 전일 스코어 (delta 계산용)
+    prev = database.get_war_indicators_prev()
+    prev_score = prev["data"].get("war_score", {}).get("score") if prev else None
     return JSONResponse({"ok": True, "data": latest["data"], "date": latest["date"],
-                         "updated_at": latest["created_at"]})
+                         "updated_at": latest["created_at"], "prev_score": prev_score,
+                         "prev_date": prev["date"] if prev else None})
 
 
 @app.post("/api/war-indicators/refresh")
@@ -714,12 +801,31 @@ async def api_refresh_war_indicators() -> JSONResponse:
     ex_data  = existing["data"] if existing else {}
     try:
         data = await asyncio.to_thread(
-            wi.fetch_all_war, _CLAUDE_API_KEY, ex_data
+            wi.fetch_all_war, _CLAUDE_API_KEY, ex_data, _EIA_API_KEY
         )
     except Exception as e:
         return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
     req_id = database.save_war_indicators(today, data)
     return JSONResponse({"ok": True, "id": req_id, "date": today})
+
+
+@app.post("/api/war-indicators/bg-refresh")
+async def api_bg_refresh_war_indicators() -> JSONResponse:
+    """전쟁지표 백그라운드 수집 — 즉시 반환"""
+    import war_indicators as wi
+    today    = datetime.now().strftime("%Y-%m-%d")
+    existing = database.get_war_indicators_latest()
+    ex_data  = existing["data"] if existing else {}
+
+    async def _run():
+        try:
+            data = await asyncio.to_thread(wi.fetch_all_war, _CLAUDE_API_KEY, ex_data, _EIA_API_KEY)
+            database.save_war_indicators(today, data)
+        except Exception as e:
+            print(f"[bg-refresh war] 오류: {e}")
+
+    asyncio.create_task(_run())
+    return JSONResponse({"ok": True, "started": True})
 
 
 @app.get("/api/news")
@@ -849,6 +955,426 @@ async def api_get_usage() -> JSONResponse:
         return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
 
 
+# ── CMS 엔드포인트 ───────────────────────────────────────────────────
+
+@app.get("/api/cms")
+def api_get_cms() -> JSONResponse:
+    """최신 CMS 스냅샷 반환 (regime 기반 포트폴리오 포함)"""
+    import cms_fetcher as cf
+    latest = database.get_cms_latest()
+    if not latest:
+        return JSONResponse({"ok": False, "data": None, "error": "데이터 없음 — 새로고침 필요"})
+    # regime으로 포트폴리오 정보 주입 (DB에는 저장 안 되므로 여기서 붙임)
+    regime = latest.get("regime", "")
+    latest["portfolio"] = cf.REGIME_PORTFOLIOS.get(regime, {})
+    return JSONResponse({"ok": True, "data": latest})
+
+
+@app.get("/api/cms/history")
+def api_get_cms_history(days: int = 30) -> JSONResponse:
+    """CMS 히스토리 반환"""
+    days = max(1, min(days, 365))
+    return JSONResponse(database.get_cms_history(days))
+
+
+@app.post("/api/cms/refresh")
+async def api_refresh_cms() -> JSONResponse:
+    """CMS 즉시 수집 후 저장"""
+    import cms_fetcher as cf
+    fred_key = os.getenv("FRED_API_KEY", "")
+    av_key   = os.getenv("ALPHA_VANTAGE_API_KEY", "")
+    if not fred_key:
+        return JSONResponse({"ok": False, "error": "FRED_API_KEY 미설정"}, status_code=400)
+    try:
+        result    = await asyncio.to_thread(cf.fetch_cms, fred_key, av_key or None)
+        today     = datetime.now().strftime("%Y-%m-%d")
+        time_slot = _get_time_slot()
+        database.init_db()   # cms_snapshots 테이블이 없으면 생성
+        row_id = database.save_cms_snapshot(
+            today, time_slot,
+            result["cms_score"], result["regime"], result,
+        )
+        return JSONResponse({"ok": True, "id": row_id, "date": today,
+                             "time_slot": time_slot, **result})
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
+
+
+_CODEX_BACKTEST = os.path.join(
+    os.path.dirname(DIR), "Codex", "outputs", "portfolio_backtest_report.html"
+)
+
+# 테마 CSS (다크/라이트 모두 포함)
+_THEME_CSS = """
+<style id="theme-override">
+:root {
+  --bg:#0f1117; --surface:#1a1d2e; --surface2:#252840;
+  --border:#2e3250; --text:#e2e8f0; --muted:#8892b0;
+  --green:#4ade80; --red:#f87171; --yellow:#fbbf24;
+  --blue:#60a5fa; --orange:#fb923c; --purple:#a78bfa;
+  --accent:#7c83fd;
+  --chart-bg:#1a1d2e; --chart-text:#e2e8f0; --chart-axis:#475569;
+}
+[data-theme="light"] {
+  --bg:#f4f6fb; --surface:#ffffff; --surface2:#eef0f8;
+  --border:#d0d5e8; --text:#1a1d2e; --muted:#5a6380;
+  --green:#16a34a; --red:#dc2626; --yellow:#d97706;
+  --blue:#2563eb; --orange:#ea580c; --purple:#7c3aed;
+  --accent:#5257d6;
+  --chart-bg:#ffffff; --chart-text:#374151; --chart-axis:#9ca3af;
+}
+*{box-sizing:border-box}
+body{background:var(--bg)!important;color:var(--text)!important;font-family:'Segoe UI',system-ui,sans-serif;margin:0;padding:20px 28px}
+h1{font-size:20px;font-weight:800;margin-bottom:4px;color:var(--text)!important}
+h2{font-size:15px;font-weight:700;margin-top:32px;margin-bottom:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em}
+p{color:var(--muted)!important;font-size:13px;margin-bottom:4px}
+.controls{display:flex;gap:12px;flex-wrap:wrap;margin:16px 0;background:var(--surface);padding:14px 16px;border-radius:10px;border:1px solid var(--border)}
+.control{display:flex;flex-direction:column;gap:5px}
+.control label{font-size:10px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.04em}
+select{padding:6px 10px;border:1px solid var(--border);background:var(--surface2);color:var(--text);border-radius:6px;font-size:12px;outline:none;cursor:pointer}
+select:focus{border-color:var(--accent)}
+.meta{font-size:11px;color:var(--muted);margin-bottom:10px}
+.hero{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:10px;margin:16px 0}
+.hero-card{background:var(--surface);border:1px solid var(--border);padding:12px 14px;border-radius:10px}
+.hero-label{font-size:10px;color:var(--muted);font-weight:600}
+.hero-value{font-size:22px;font-weight:800;margin-top:4px;color:var(--text)}
+.tables{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin:16px 0}
+@media(max-width:900px){.tables{grid-template-columns:1fr}}
+table{width:100%;border-collapse:collapse;background:var(--surface);border-radius:10px;overflow:hidden;border:1px solid var(--border);font-size:12px}
+thead tr{background:var(--surface2)}
+th{padding:10px 12px;text-align:left;color:var(--muted);font-weight:700;font-size:10px;text-transform:uppercase;letter-spacing:.04em;cursor:pointer;user-select:none;white-space:nowrap;border-bottom:1px solid var(--border)}
+th:hover{color:var(--text);background:var(--border)}
+th.sort-asc::after{content:" ↑";color:var(--accent)}
+th.sort-desc::after{content:" ↓";color:var(--accent)}
+td{padding:9px 12px;border-top:1px solid var(--border);color:var(--text)}
+tr:hover td{background:rgba(128,128,128,.06)}
+td:first-child{color:var(--muted);font-size:11px}
+canvas{margin-top:16px!important;border-radius:10px!important;border:1px solid var(--border)!important;width:100%!important;height:auto!important}
+.tactic-wrap{display:grid;gap:12px;margin-top:24px}
+.tactic-card{background:var(--surface);border:1px solid var(--border);padding:16px;border-radius:10px;max-width:100%!important}
+.tactic-card h3{color:var(--yellow);font-size:14px;margin:0 0 6px}
+.tactic-card h4{color:var(--muted);font-size:11px;font-weight:700;text-transform:uppercase;margin:0 0 6px}
+.tactic-meta{color:var(--muted);font-size:11px;margin:0 0 10px}
+.tactic-columns{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.tactic-card ul{margin:0;padding-left:16px;color:var(--text);font-size:12px;line-height:1.7}
+code{background:var(--surface2);color:var(--accent);padding:1px 5px;border-radius:4px;font-size:11px}
+.pct-pos{color:var(--green)!important;font-weight:700}
+.pct-neg{color:var(--red)!important;font-weight:700}
+.pct-neutral{color:var(--muted)!important}
+/* 테마 토글 버튼 */
+#bt-theme-btn{position:fixed;top:14px;right:16px;z-index:9999;background:var(--surface);border:1px solid var(--border);color:var(--text);border-radius:20px;padding:5px 12px;font-size:14px;cursor:pointer;line-height:1;transition:all .2s}
+#bt-theme-btn:hover{border-color:var(--accent);color:var(--accent)}
+</style>
+"""
+
+# 테마 인식 차트 + 정렬 JS 주입
+_INJECT_JS = """
+<script>
+// ── 1. 테마 초기화 (메인 페이지 localStorage 공유) ────────────────────
+(function(){
+  const t = localStorage.getItem('theme') || 'dark';
+  if (t === 'light') document.documentElement.setAttribute('data-theme', 'light');
+  // 테마 토글 버튼 삽입
+  const btn = document.createElement('button');
+  btn.id = 'bt-theme-btn';
+  btn.title = '다크/라이트 모드 전환';
+  btn.textContent = t === 'light' ? '☀️' : '🌙';
+  btn.onclick = toggleBtTheme;
+  document.body.appendChild(btn);
+})();
+
+function toggleBtTheme() {
+  const isLight = document.documentElement.getAttribute('data-theme') === 'light';
+  const next = isLight ? 'dark' : 'light';
+  if (next === 'light') {
+    document.documentElement.setAttribute('data-theme', 'light');
+  } else {
+    document.documentElement.removeAttribute('data-theme');
+  }
+  localStorage.setItem('theme', next);
+  document.getElementById('bt-theme-btn').textContent = next === 'light' ? '☀️' : '🌙';
+  if (typeof render !== 'undefined') render();
+}
+
+// ── 2. 차트 컬러 팔레트 ───────────────────────────────────────────────
+const DARK_COLORS = {
+  CMS_Portfolio:'#fbbf24',       CMS_K_Portfolio:'#4ade80',
+  CMS_K_Dart_Portfolio:'#34d399',CMS_v2_Portfolio:'#f87171',
+  CMS_K_v2_Portfolio:'#fb923c',  CMS_K_v2_Dart_Portfolio:'#fdba74',
+  CMS_v2_Tactic_Portfolio:'#a78bfa', CMS_K_v2_Tactic_Portfolio:'#818cf8',
+  KOSPI:'#60a5fa', DIA:'#94a3b8', QQQ:'#e879f9', SPY:'#38bdf8'
+};
+const LIGHT_COLORS = {
+  CMS_Portfolio:'#0b5d5b',       CMS_K_Portfolio:'#1450a3',
+  CMS_K_Dart_Portfolio:'#0e7ac4',CMS_v2_Portfolio:'#b43f3f',
+  CMS_K_v2_Portfolio:'#7a4f01',  CMS_K_v2_Dart_Portfolio:'#6e8f1c',
+  CMS_v2_Tactic_Portfolio:'#e05b2c', CMS_K_v2_Tactic_Portfolio:'#4b7f12',
+  KOSPI:'#1d4ed8', DIA:'#6d28d9', QQQ:'#7c2d8d', SPY:'#b45309'
+};
+
+function _isLight(){ return document.documentElement.getAttribute('data-theme')==='light'; }
+
+// ── 3. drawChart 완전 교체 (범례 텍스트 색 테마 반영) ─────────────────
+// 원본 함수는 fillStyle="#333" 하드코딩으로 범례가 다크 배경에서 안 보임
+// → 완전히 재구현하여 테마 색상 사용
+window.drawChart = function(targetCtx, filtered, reverseMode) {
+  const light    = _isLight();
+  const bgColor  = light ? '#ffffff' : '#1a1d2e';
+  const textClr  = light ? '#374151' : '#e2e8f0';
+  const axisClr  = light ? '#9ca3af' : '#475569';
+  const baseClr  = light ? 'rgba(0,0,0,.15)' : 'rgba(255,255,255,.10)';
+  const activeC  = light ? LIGHT_COLORS : DARK_COLORS;
+
+  // 전역 colors 객체 업데이트 (테이블 레전드 등 다른 곳도 사용)
+  if (typeof colors !== 'undefined') Object.assign(colors, activeC);
+
+  targetCtx.clearRect(0, 0, targetCtx.canvas.width, targetCtx.canvas.height);
+  targetCtx.fillStyle = bgColor;
+  targetCtx.fillRect(0, 0, targetCtx.canvas.width, targetCtx.canvas.height);
+
+  const padding = { left: 70, right: 20, top: 20, bottom: 40 };
+  const W = targetCtx.canvas.width  - padding.left - padding.right;
+  const H = targetCtx.canvas.height - padding.top  - padding.bottom;
+  const source = reverseMode ? [...filtered].reverse() : filtered;
+
+  if (!source.length) return;
+
+  // 누적 곡선 계산
+  const curves = {};
+  let minY = Infinity, maxY = -Infinity;
+  for (const key of order) {
+    let cum = 1;
+    curves[key] = source.map(row => {
+      cum *= reverseMode ? (1 / (1 + row[key])) : (1 + row[key]);
+      minY = Math.min(minY, cum);
+      maxY = Math.max(maxY, cum);
+      return cum;
+    });
+  }
+  if (!Number.isFinite(minY) || !Number.isFinite(maxY)) return;
+  if (minY === maxY) { minY -= 0.1; maxY += 0.1; }
+
+  // 기준선 (1.0)
+  if (1.0 >= minY && 1.0 <= maxY) {
+    const by = padding.top + (1 - (1.0 - minY) / (maxY - minY)) * H;
+    targetCtx.strokeStyle = baseClr;
+    targetCtx.lineWidth = 1;
+    targetCtx.setLineDash([4,4]);
+    targetCtx.beginPath();
+    targetCtx.moveTo(padding.left, by);
+    targetCtx.lineTo(padding.left + W, by);
+    targetCtx.stroke();
+    targetCtx.setLineDash([]);
+  }
+
+  // 축
+  targetCtx.strokeStyle = axisClr;
+  targetCtx.lineWidth = 1;
+  targetCtx.beginPath();
+  targetCtx.moveTo(padding.left, padding.top);
+  targetCtx.lineTo(padding.left, padding.top + H);
+  targetCtx.lineTo(padding.left + W, padding.top + H);
+  targetCtx.stroke();
+
+  // 곡선
+  for (const key of order) {
+    const series = curves[key];
+    targetCtx.strokeStyle = activeC[key] || '#888';
+    targetCtx.lineWidth = 2;
+    targetCtx.beginPath();
+    series.forEach((v, i) => {
+      const x = padding.left + (i / Math.max(series.length - 1, 1)) * W;
+      const y = padding.top + (1 - (v - minY) / (maxY - minY)) * H;
+      i === 0 ? targetCtx.moveTo(x, y) : targetCtx.lineTo(x, y);
+    });
+    targetCtx.stroke();
+  }
+
+  // Y축 레이블
+  targetCtx.fillStyle = textClr;
+  targetCtx.font = '12px sans-serif';
+  targetCtx.fillText(minY.toFixed(2), 4, padding.top + H);
+  targetCtx.fillText(maxY.toFixed(2), 4, padding.top + 12);
+
+  // 범례 (색상 박스 + 텍스트)
+  const cols = 4;
+  const colW = Math.floor(W / cols);
+  targetCtx.font = '11px sans-serif';
+  order.forEach((key, idx) => {
+    const lx = padding.left + (idx % cols) * colW;
+    const ly = targetCtx.canvas.height - 18 - Math.floor(idx / cols) * 18;
+    // 색 박스
+    targetCtx.fillStyle = activeC[key] || '#888';
+    targetCtx.fillRect(lx, ly, 12, 10);
+    // 범례 텍스트 — 테마 색상으로
+    targetCtx.fillStyle = textClr;
+    if (typeof labels !== 'undefined' && labels[key]) {
+      targetCtx.fillText(labels[key], lx + 16, ly + 9);
+    } else {
+      targetCtx.fillText(key, lx + 16, ly + 9);
+    }
+  });
+};
+
+// ── 4. 테이블 유틸 ───────────────────────────────────────────────────
+function colorizeTable(table){
+  table.querySelectorAll('td:not(:first-child)').forEach(td=>{
+    const num = parseFloat(td.textContent);
+    if(!isNaN(num)){
+      td.classList.remove('pct-pos','pct-neg','pct-neutral');
+      if(num>0) td.classList.add('pct-pos');
+      else if(num<0) td.classList.add('pct-neg');
+      else td.classList.add('pct-neutral');
+    }
+  });
+}
+
+function makeSortable(table){
+  const ths = table.querySelectorAll('thead th');
+  ths.forEach((th,ci)=>{
+    if(ci===0) return;
+    let dir=0;
+    th.title='클릭하여 정렬';
+    th.addEventListener('click',()=>{
+      dir = dir===1?-1:1;
+      ths.forEach(h=>h.classList.remove('sort-asc','sort-desc'));
+      th.classList.add(dir===1?'sort-asc':'sort-desc');
+      const tbody=table.querySelector('tbody');
+      const rows=[...tbody.querySelectorAll('tr')];
+      rows.sort((a,b)=>(parseFloat(a.cells[ci]?.textContent)||0)-(parseFloat(b.cells[ci]?.textContent)||0));
+      if(dir===-1) rows.reverse();
+      rows.forEach(r=>tbody.appendChild(r));
+      colorizeTable(table);
+    });
+  });
+}
+
+// ── 5. 초기화 ────────────────────────────────────────────────────────
+window.addEventListener('DOMContentLoaded',()=>{
+  document.querySelectorAll('table').forEach(t=>{ makeSortable(t); colorizeTable(t); });
+  // render 래핑: 필터 변경 후 테이블 재색상화
+  if(typeof render!=='undefined'){
+    const _origRender = render;
+    window.render = function(){
+      _origRender();
+      document.querySelectorAll('table').forEach(colorizeTable);
+    };
+    setTimeout(render, 80);
+  }
+});
+</script>
+"""
+
+@app.get("/api/cms/backtest-page", response_class=HTMLResponse)
+def api_cms_backtest_page() -> HTMLResponse:
+    """기존 Codex 백테스트 HTML에 다크 테마 + 정렬 기능 주입"""
+    try:
+        with open(_CODEX_BACKTEST, encoding="utf-8") as f:
+            html = f.read()
+    except FileNotFoundError:
+        return HTMLResponse("<h1>파일 없음</h1><p>Codex/outputs/portfolio_backtest_report.html 을 확인하세요.</p>", status_code=404)
+
+    # 기존 <style> 교체
+    import re as _re
+    html = _re.sub(r"<style>.*?</style>", _THEME_CSS, html, count=1, flags=_re.DOTALL)
+    # </body> 직전에 JS 주입
+    html = html.replace("</body>", _INJECT_JS + "</body>")
+    return HTMLResponse(content=html)
+
+
+# ── Grafana / Infinity 메트릭 엔드포인트 ─────────────────────────────
+
+@app.get("/api/metrics/crash-score")
+def api_metrics_crash_score(days: int = 30) -> JSONResponse:
+    """폭락스코어 시계열 — Grafana Time series 패널용"""
+    days = max(1, min(days, 365))
+    rows = database.get_daily_indicators_all(days)
+    result = []
+    for row in rows:
+        if row.get("crash_score") is None:
+            continue
+        result.append({
+            "time":  row["created_at"],
+            "value": row["crash_score"],
+            "slot":  row["time_slot"],
+        })
+    return JSONResponse(result)
+
+
+@app.get("/api/metrics/indicator")
+def api_metrics_indicator(key: str, days: int = 30) -> JSONResponse:
+    """개별 지표 시계열 (범용 key 기반) — Grafana Time series 패널용.
+    data_json에 새 key 추가 시 API 변경 불필요."""
+    days = max(1, min(days, 365))
+    rows = database.get_daily_indicators_all(days)
+    result = []
+    for row in rows:
+        indicator = row.get("data", {}).get(key)
+        if not isinstance(indicator, dict):
+            continue
+        value = indicator.get("value")
+        if value is None:
+            continue
+        result.append({
+            "time":   row["created_at"],
+            "value":  value,
+            "status": indicator.get("status", ""),
+            "slot":   row["time_slot"],
+        })
+    return JSONResponse(result)
+
+
+@app.get("/api/metrics/status")
+def api_metrics_status() -> JSONResponse:
+    """현재 지표 상태 테이블 — Grafana Table 패널용"""
+    history = database.get_daily_indicators(1)
+    if not history:
+        return JSONResponse([])
+    latest_row = history[0]
+    data = latest_row.get("data", {})
+    updated = latest_row.get("created_at", "")
+    result = []
+    for k, v in data.items():
+        if not isinstance(v, dict):
+            continue
+        value = v.get("value")
+        if value is None:
+            continue
+        result.append({
+            "indicator": v.get("note", k),
+            "key":       k,
+            "value":     value,
+            "status":    v.get("status", ""),
+            "updated":   updated,
+        })
+    return JSONResponse(result)
+
+
+@app.get("/api/metrics/future")
+def api_metrics_future(days: int = 30) -> JSONResponse:
+    """미래방향성 시계열 — Grafana Time series 패널용"""
+    days = max(1, min(days, 365))
+    history = database.get_future_indicators(days)
+    result = []
+    for row in history:
+        data = row.get("data", {})
+        if not data:
+            continue
+        scores = [v.get("score", 50) for v in data.values() if isinstance(v, dict)]
+        if not scores:
+            continue
+        bull_score = round(sum(scores) / len(scores), 1)
+        bear_score = round(100 - bull_score, 1)
+        result.append({
+            "time":       row["date"],
+            "bull_score": bull_score,
+            "bear_score": bear_score,
+            "net":        round(bull_score - bear_score, 1),
+        })
+    return JSONResponse(result)
+
+
 @app.get("/api/index-history")
 async def api_index_history() -> JSONResponse:
     """KOSPI, KOSDAQ, NASDAQ, DOW 30일 종가 히스토리"""
@@ -882,3 +1408,55 @@ async def api_index_history() -> JSONResponse:
     tasks = [fetch_one(k, s) for k, s in symbols.items()]
     results = await asyncio.gather(*tasks)
     return JSONResponse({k: v for k, v in results})
+
+
+# ── 로또 ──────────────────────────────────────────────────────────
+
+@app.post("/api/lotto/update")
+async def api_lotto_update() -> JSONResponse:
+    import lotto
+    result = await asyncio.to_thread(lotto.fetch_and_store)
+    return JSONResponse({'ok': True, **result})
+
+@app.get("/api/lotto/recommend")
+async def api_lotto_recommend() -> JSONResponse:
+    import lotto
+    draws = await asyncio.to_thread(lotto.get_all_draws)
+    if not draws:
+        return JSONResponse({'ok': False, 'error': '데이터 없음. /api/lotto/update 먼저 실행하세요.'})
+    games = lotto.get_recommendations(draws)
+    stats = lotto.get_stats(draws)
+    latest = draws[-1]
+    return JSONResponse({
+        'ok': True, 'games': games, 'stats': stats,
+        'latest': {'draw_no': latest['draw_no'], 'date': latest['date'],
+                   'numbers': latest['numbers'], 'bonus': latest['bonus']},
+    })
+
+@app.get("/api/lotto/stats")
+async def api_lotto_stats() -> JSONResponse:
+    import lotto
+    draws = await asyncio.to_thread(lotto.get_all_draws)
+    if not draws:
+        return JSONResponse({'ok': False, 'error': '데이터 없음'})
+    return JSONResponse({'ok': True, **lotto.get_stats(draws)})
+
+@app.get("/api/calendar")
+async def api_calendar(year: int = 0, refresh: bool = False) -> JSONResponse:
+    import calendar_fetcher as _cf
+    target_year = year if year else datetime.now().year
+    if refresh:
+        _cf._YEAR_CACHE.pop(target_year, None)
+        _cf._MAIN_CACHE["ts"] = 0
+    events = await asyncio.to_thread(_cf.fetch_calendar_year, target_year)
+    return JSONResponse({"ok": True, "events": events, "year": target_year})
+
+
+@app.get("/api/lotto/recent")
+async def api_lotto_recent(limit: int = 20) -> JSONResponse:
+    import lotto
+    draws = await asyncio.to_thread(lotto.get_all_draws)
+    if not draws:
+        return JSONResponse({'ok': False, 'draws': []})
+    recent = draws[-(min(limit, len(draws))):][::-1]  # 최신순
+    return JSONResponse({'ok': True, 'draws': recent})

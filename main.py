@@ -2,8 +2,7 @@
 main.py
 한국주식 패턴 알림 텔레그램 봇
 - ① 15:40 자동 스캔 (KOSPI+KOSDAQ 중소형주)
-- ② 08:00 자동 뉴스 분석 (워치리스트 종목)
-- ③ 수동: /scan, /news, "지금 스캔해줘"
+- ② 수동: /scan, "지금 스캔해줘"
 """
 
 import asyncio
@@ -33,12 +32,35 @@ _cwd = _ROOT  # claude 실행 기준 디렉토리
 _model = "claude"  # "claude" | "ollama"
 OLLAMA_MODEL = "qwen2.5:14b"
 
+def _model_prefix() -> str:
+    """응답 메시지 앞에 붙일 모델명 prefix."""
+    if _model == "ollama":
+        # qwen2.5:14b → qwen2.5-14b 형식 정리
+        label = OLLAMA_MODEL.replace(":", "-")
+        return f"(ollama:{label})\n"
+    # claude CLI → 버전 파싱 시도, 실패 시 기본값
+    try:
+        r = subprocess.run(
+            [CLAUDE_BIN, "--version"],
+            capture_output=True, text=True, timeout=5,
+            env={k: v for k, v in os.environ.items() if k != "CLAUDECODE"},
+        )
+        ver_line = (r.stdout + r.stderr).strip().split("\n")[0].lower()
+        if "haiku" in ver_line:
+            label = "haiku"
+        elif "opus" in ver_line:
+            label = "opus"
+        else:
+            label = "sonnet"
+    except Exception:
+        label = "sonnet"
+    return f"(claude:{label})\n"
+
 # AI-stockAlarm 디렉토리를 Python 경로에 추가
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from data_fetcher import get_candidates_cached, get_stock_name
 from scanner import scan_all, scan_all_plus, format_result
-from news_analyzer import analyze_watchlist, format_news_result
 from watchlist import update_from_scan, add_stock, remove_stock, get_all
 from sector_info import enrich_results
 import database
@@ -47,7 +69,6 @@ from web_server import app as web_app
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 USER_ID = int(os.getenv("TELEGRAM_USER_ID", "0"))
 CLAUDE_KEY = os.getenv("CLAUDE_API_KEY")
-DART_KEY = os.getenv("DART_API_KEY", "")
 NGROK_TOKEN = os.getenv("NGROK_AUTH_TOKEN", "")
 
 claude_client = anthropic.Anthropic(api_key=CLAUDE_KEY)
@@ -145,52 +166,6 @@ async def do_scan(app: Application, is_manual: bool = False) -> None:
         await msg.edit_text(f"❌ 스캔 오류: {e}")
 
 
-async def do_news(app: Application) -> None:
-    """워치리스트 뉴스 분석 (② 자동 / 수동 공용)"""
-    data = get_all()
-    stocks = data.get("stocks", [])
-
-    if not stocks:
-        await app.bot.send_message(
-            chat_id=USER_ID,
-            text="📰 워치리스트가 비어있습니다.\n먼저 /scan 을 실행하세요.",
-        )
-        return
-
-    msg = await app.bot.send_message(
-        chat_id=USER_ID,
-        text=f"📰 뉴스 분석 시작... ({len(stocks)}개 종목)",
-    )
-
-    try:
-        results = await asyncio.to_thread(
-            analyze_watchlist, stocks, DART_KEY, claude_client
-        )
-
-        if not results:
-            await msg.edit_text("📰 관련 뉴스/공시 없음")
-            return
-
-        from datetime import datetime
-        header = f"📰 *뉴스 분석* \\({datetime.now().strftime('%m/%d %H:%M')}\\)\n{'━' * 18}"
-        await msg.edit_text(header, parse_mode="MarkdownV2")
-
-        for r in results:
-            try:
-                await app.bot.send_message(
-                    chat_id=USER_ID,
-                    text=format_news_result(r),
-                    parse_mode="MarkdownV2",
-                )
-                await asyncio.sleep(0.5)
-            except Exception:
-                plain = f"{r['name']} ({r['ticker']})\n{r.get('analysis', '')}"
-                await app.bot.send_message(chat_id=USER_ID, text=plain)
-
-    except Exception as e:
-        await msg.edit_text(f"❌ 뉴스 분석 오류: {e}")
-
-
 # ── 텔레그램 핸들러 ───────────────────────────────────────────────────
 
 @authorized
@@ -199,7 +174,6 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "📈 *주식 패턴 알림 봇*\n\n"
         "명령어:\n"
         "/scan \\- 즉시 패턴 스캔\n"
-        "/news \\- 워치리스트 뉴스 분석\n"
         "/watchlist \\- 감지된 종목 목록\n"
         "/dashboard \\- 웹 대시보드 링크\n"
         "/model \\- 응답 모델 확인/변경 \\(claude \\| ollama\\)\n"
@@ -213,11 +187,6 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 @authorized
 async def cmd_scan(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await do_scan(context.application, is_manual=True)
-
-
-@authorized
-async def cmd_news(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await do_news(context.application)
 
 
 @authorized
@@ -437,7 +406,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         else:
             result = await _run_claude(text, _cwd)
         await msg.delete()
-        await _send_chunked(update, result)
+        await _send_chunked(update, _model_prefix() + result)
     except subprocess.TimeoutExpired:
         await msg.edit_text("❌ 타임아웃 (300초 초과)")
     except Exception as e:
@@ -448,10 +417,6 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
 async def _scheduled_scan(app: Application) -> None:
     await do_scan(app, is_manual=False)
-
-
-async def _scheduled_news(app: Application) -> None:
-    await do_news(app)
 
 
 async def _scheduled_indicators(app: Application, time_slot: str = "morning") -> None:
@@ -500,100 +465,18 @@ async def _scheduled_indicators(app: Application, time_slot: str = "morning") ->
     _db.save_daily_indicators(today, data, crash_score, "자동 수집", time_slot)
     print(f"✅ 지표 수집 완료 [{time_slot}] (폭락스코어: {crash_score})")
 
-    # ── 추이 헬퍼 ───────────────────────────────────────────────────
-    def _trend(key: str, higher_is_bad: bool = True) -> str:
-        """전일 대비 추이 화살표 반환"""
-        cur = data.get(key, {}).get("value")
-        prv = prev_data.get(key, {}).get("value")
-        try:
-            cur_f, prv_f = float(str(cur).replace(",", "")), float(str(prv).replace(",", ""))
-            diff = cur_f - prv_f
-            if abs(diff) < 0.001 * abs(prv_f or 1):
-                return "→"
-            if diff > 0:
-                return "↑" if higher_is_bad else "↑"
-            return "↓"
-        except Exception:
-            return ""
-
-    def _status_emoji(key: str) -> str:
-        st = data.get(key, {}).get("status", "")
-        return {"위험":"🔴","경고":"🟠","관망":"🟡","긍정":"🟢","최상":"🔵"}.get(st, "⚪")
-
-    # ── 기본 지표 메시지 ─────────────────────────────────────────────
-    sc = crash_score
-    score_emoji = "🟢" if sc < 30 else "🔵" if sc < 50 else "🟡" if sc < 65 else "🟠" if sc < 80 else "🔴"
-    score_trend = ""
-    if prev_score is not None:
-        diff = crash_score - prev_score
-        score_trend = f" (전일比 {'↑' if diff > 0 else '↓'}{abs(diff):.1f})" if abs(diff) >= 0.5 else " (→ 변동없음)"
-
-    usd_krw = data.get("usd_krw", {}).get("value", "—")
-    us10y   = data.get("us10y",   {}).get("value", "—")
-    wti_v   = data.get("wti",     {}).get("value", "—")
-    hy      = data.get("hy_spread",{}).get("value", "—")
-    fg      = data.get("fear_greed",{}).get("value", "—")
-
-    summary_msg = (
-        f"📊 시장 지표 수집 완료 [{time_slot}]\n"
-        f"{'─'*22}\n"
-        f"{score_emoji} 폭락스코어: {crash_score}/100{score_trend}\n\n"
-        f"💵 원/달러: {usd_krw}원 {_trend('usd_krw', True)}\n"
-        f"🏦 미국금리(10Y): {us10y}% {_trend('us10y', True)}\n"
-        f"🛢 WTI 유가: {wti_v}$ {_trend('wti', True)}\n"
-        f"📈 HY 스프레드: {hy}% {_trend('hy_spread', True)}\n"
-        f"😱 Fear & Greed: {fg} {_trend('fear_greed', False)}\n\n"
-        f"{_status_emoji('usd_krw')} 원달러  "
-        f"{_status_emoji('us10y')} 금리  "
-        f"{_status_emoji('hy_spread')} 신용  "
-        f"{_status_emoji('fear_greed')} 심리"
-    )
-
-    await app.bot.send_message(chat_id=USER_ID, text=summary_msg)
-
-    # ── Claude 주가 영향 분석 ────────────────────────────────────────
-    def _build_analysis_prompt() -> str:
-        lines = []
-        for k in ["usd_krw","us10y","wti","hy_spread","fear_greed","foreign_flow","soxx","yield_curve","tga","tariff"]:
-            d = data.get(k, {})
-            p = prev_data.get(k, {})
-            cur_v = d.get("value", "N/A")
-            prv_v = p.get("value", "N/A")
-            st = d.get("status", "")
-            lines.append(f"- {k}: {cur_v} (전일 {prv_v}) / 상태:{st}")
-        indicators_str = "\n".join(lines)
-        return (
-            f"현재 주요 시장 지표:\n{indicators_str}\n"
-            f"폭락 예측 스코어: {crash_score}/100 (전일: {prev_score})\n\n"
-            "위 지표들을 바탕으로 한국 주식시장(KOSPI/KOSDAQ)에 미치는 영향을 분석해줘.\n"
-            "형식:\n"
-            "1. 전반적 시장 환경 (2줄)\n"
-            "2. 핵심 위험/기회 요인 (각 1~2가지, 간결하게)\n"
-            "3. 단기 전망 (1줄)\n"
-            "4. 주목할 섹터 (1줄)\n"
-            "한국어로, 총 10줄 이내로 간결하게."
-        )
-
+    # CMS 스코어 함께 수집
     try:
-        prompt = _build_analysis_prompt()
-        def _call_claude():
-            resp = claude_client.messages.create(
-                model="claude-haiku-4-5-20251001",
-                max_tokens=600,
-                messages=[{"role": "user", "content": prompt}],
-            )
-            return resp.content[0].text
-        analysis = await asyncio.to_thread(_call_claude)
-        await app.bot.send_message(
-            chat_id=USER_ID,
-            text=f"🤖 주가 영향 분석\n{'─'*22}\n{analysis}"
-        )
+        import cms_fetcher as cf
+        fred_key = os.getenv("FRED_API_KEY", "")
+        av_key   = os.getenv("ALPHA_VANTAGE_API_KEY", "")
+        if fred_key:
+            cms_result = await asyncio.to_thread(cf.fetch_cms, fred_key, av_key or None)
+            _db.save_cms_snapshot(today, time_slot, cms_result["cms_score"],
+                                  cms_result["regime"], cms_result)
+            print(f"✅ CMS 수집 완료 [{time_slot}] (score: {cms_result['cms_score']} / {cms_result['regime']})")
     except Exception as e:
-        print(f"⚠️ 분석 오류: {e}")
-        await app.bot.send_message(
-            chat_id=USER_ID,
-            text=f"⚠️ 주가 분석 오류: {e}"
-        )
+        print(f"⚠️  CMS 수집 오류: {e}")
 
 
 async def _scheduled_future_indicators(app: Application) -> None:
@@ -648,6 +531,107 @@ async def _scheduled_future_indicators(app: Application) -> None:
             pass
 
 
+async def _scheduled_lotto_notify(app: Application) -> None:
+    """로또 구매 알림 — 매주 금요일 12:00. 추천번호를 DB에 저장."""
+    import lotto as _lotto
+    import database as _db
+    try:
+        draws = await asyncio.to_thread(_lotto.get_all_draws)
+        if not draws:
+            await asyncio.to_thread(_lotto.fetch_and_store)
+            draws = await asyncio.to_thread(_lotto.get_all_draws)
+        games = _lotto.get_recommendations(draws)
+        latest = draws[-1]
+        next_draw_no = latest['draw_no'] + 1   # 이번 주 추첨 회차
+
+        # 추천번호 DB 저장 (토요일 비교용)
+        await asyncio.to_thread(_db.save_lotto_recommendations, next_draw_no, games)
+
+        ball_str = lambda nums: "  ".join(str(n) for n in nums)
+        lines = ["🎱 *로또 안샀으면 사세요!*\n"]
+        lines.append(f"📌 최근 당첨번호 (제{latest['draw_no']}회 {latest['date']})")
+        lines.append(f"  {ball_str(latest['numbers'])}  +보너스 {latest['bonus']}\n")
+        lines.append(f"🎯 *제{next_draw_no}회 추천 번호 (5게임)*")
+        for g in games:
+            lines.append(f"  [{g['label']}] {ball_str(g['numbers'])}")
+        lines.append("\n🍀 행운을 빕니다!")
+
+        await app.bot.send_message(
+            chat_id=USER_ID,
+            text="\n".join(lines),
+            parse_mode="Markdown",
+        )
+        print(f"🎱 로또 알림 발송 완료 (제{next_draw_no}회 추천 저장)")
+    except Exception as e:
+        print(f"⚠️ 로또 알림 오류: {e}")
+
+
+async def _scheduled_lotto_update(app: Application) -> None:
+    """로또 당첨번호 DB 업데이트 + 지난회차 추천 비교 — 매주 토요일 21:00"""
+    import lotto as _lotto
+    import database as _db
+    try:
+        result = await asyncio.to_thread(_lotto.fetch_and_store)
+        draws = await asyncio.to_thread(_lotto.get_all_draws)
+        if not draws:
+            print("🎱 로또 DB: 데이터 없음")
+            return
+
+        latest = draws[-1]
+        ball_str = lambda nums: "  ".join(str(n) for n in nums)
+        lines = []
+
+        if result['saved'] > 0:
+            lines.append(f"🎱 *제{latest['draw_no']}회 당첨번호*")
+            lines.append(f"  {ball_str(latest['numbers'])}  +보너스 {latest['bonus']}")
+            lines.append(f"  추첨일: {latest['date']}")
+        else:
+            lines.append(f"🎱 *제{latest['draw_no']}회* (이미 최신)")
+            lines.append(f"  {ball_str(latest['numbers'])}  +보너스 {latest['bonus']}")
+
+        # ── 지난 주 추천번호 비교 ──────────────────────────────────
+        prev_games = await asyncio.to_thread(_db.get_lotto_recommendation, latest['draw_no'])
+        if prev_games:
+            win_set = set(latest['numbers'])
+            bonus   = latest['bonus']
+            lines.append(f"\n📊 *지난 추천번호 vs 실제 당첨 비교*")
+            best_match = 0
+            for g in prev_games:
+                recs   = g['numbers']
+                matched = [n for n in recs if n in win_set]
+                has_bonus = bonus in recs
+                cnt = len(matched)
+                if cnt > best_match:
+                    best_match = cnt
+                # 등수 판정
+                if cnt == 6:
+                    rank = "🥇 1등!"
+                elif cnt == 5 and has_bonus:
+                    rank = "🥈 2등!"
+                elif cnt == 5:
+                    rank = "🥉 3등"
+                elif cnt == 4:
+                    rank = "4등"
+                elif cnt == 3:
+                    rank = "5등"
+                else:
+                    rank = f"{cnt}개 일치"
+                matched_str = " ".join(f"*{n}*" if n in win_set else str(n) for n in recs)
+                lines.append(f"  [{g['label']}] {matched_str} → {rank}")
+            lines.append(f"\n  최고 일치: {best_match}개")
+        else:
+            lines.append("\n_(지난 추천번호 미저장 — 다음 주부터 비교 가능)_")
+
+        await app.bot.send_message(
+            chat_id=USER_ID,
+            text="\n".join(lines),
+            parse_mode="Markdown",
+        )
+        print(f"🎱 로또 업데이트 완료: 제{latest['draw_no']}회 (신규 {result['saved']}개)")
+    except Exception as e:
+        print(f"⚠️ 로또 DB 업데이트 오류: {e}")
+
+
 async def _scheduled_war_indicators(app: Application) -> None:
     """전쟁지표 수집 — 매일 04:35"""
     import war_indicators as wi
@@ -672,6 +656,20 @@ async def _scheduled_war_indicators(app: Application) -> None:
         print(f"✅ 전쟁지표 수집 완료")
     except Exception as e:
         print(f"⚠️  전쟁지표 수집 오류: {e}")
+
+
+async def _scheduled_calendar_refresh(app: Application) -> None:
+    """경제 캘린더 캐시 갱신 — 매일 05:00"""
+    import calendar_fetcher as cf
+    year = __import__('datetime').datetime.now().year
+    print(f"📅 경제 캘린더 갱신: {year}년")
+    try:
+        cf._YEAR_CACHE.pop(year, None)
+        cf._MAIN_CACHE["ts"] = 0
+        await asyncio.to_thread(cf.fetch_calendar_year, year)
+        print("✅ 경제 캘린더 갱신 완료")
+    except Exception as e:
+        print(f"⚠️  경제 캘린더 갱신 오류: {e}")
 
 
 async def _scheduled_news_collect(app: Application) -> None:
@@ -779,16 +777,6 @@ async def post_init(app: Application) -> None:
         args=[app],
     )
 
-    # ② 아침 뉴스: 평일 08:00
-    scheduler.add_job(
-        _scheduled_news,
-        "cron",
-        day_of_week="mon-fri",
-        hour=8,
-        minute=0,
-        args=[app],
-    )
-
     # ④ 지표 자동 수집 — 매일 4회 (주말 포함)
     for _hour, _minute, _slot in [
         (8,  10, "morning"),    # 08:10 아침 (미국 전일 마감 후)
@@ -841,6 +829,35 @@ async def post_init(app: Application) -> None:
         args=[app],
     )
 
+    # ⑪ 경제 캘린더 캐시 갱신: 매일 05:00
+    scheduler.add_job(
+        _scheduled_calendar_refresh,
+        "cron",
+        hour=5,
+        minute=0,
+        args=[app],
+    )
+
+    # ⑨ 로또 구매 알림: 매주 금요일 12:00
+    scheduler.add_job(
+        _scheduled_lotto_notify,
+        "cron",
+        day_of_week="fri",
+        hour=12,
+        minute=0,
+        args=[app],
+    )
+
+    # ⑩ 로또 당첨번호 업데이트: 매주 토요일 21:00 (추첨 후)
+    scheduler.add_job(
+        _scheduled_lotto_update,
+        "cron",
+        day_of_week="sat",
+        hour=21,
+        minute=0,
+        args=[app],
+    )
+
     # ③ 장 마감 후 일일 크롤: 평일 16:00
     scheduler.add_job(
         _scheduled_crawl,
@@ -883,7 +900,6 @@ def main() -> None:
     app.add_error_handler(error_handler)
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("scan", cmd_scan))
-    app.add_handler(CommandHandler("news", cmd_news))
     app.add_handler(CommandHandler("watchlist", cmd_watchlist))
     app.add_handler(CommandHandler("add", cmd_add))
     app.add_handler(CommandHandler("remove", cmd_remove))

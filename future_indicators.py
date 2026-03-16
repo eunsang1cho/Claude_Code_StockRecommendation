@@ -1,6 +1,6 @@
 """
 future_indicators.py
-13개 메가트렌드 방향성 모멘텀 지표 수집
+11개 핵심 메가트렌드 방향성 모멘텀 지표 수집 (v2)
 — FutureDirection.md의 각 방향성에 대해 프록시 ETF/자산의 모멘텀을 측정
 """
 
@@ -10,48 +10,59 @@ import urllib.request
 from datetime import datetime, timedelta
 from typing import Optional
 
-# ── 방향성 정의 (13개 축) ────────────────────────────────────────────────
+# ── 방향성 정의 (11개 핵심 축 v2) ────────────────────────────────────────
 
 DIRECTIONS = {
-    "energy": {
-        "name": "에너지 패권 전환",
-        "icon": "🔵",
-        "theme": "전기가 화폐가 된다",
-        "proxy": "ICLN",       # iShares Global Clean Energy ETF
-        "proxy_name": "ICLN",
+    "power_grid": {
+        "name": "전력망·에너지 패권",
+        "icon": "⚡",
+        "theme": "전기가 AI의 석유다",
+        "proxy":    "XLU",         # 🇺🇸 Utilities Select Sector SPDR
+        "proxy_name": "XLU",
+        "proxy_kr": "015760.KS",   # 🇰🇷 한국전력 (KEPCO)
+        "proxy_kr_name": "한국전력",
         "higher_better": True,
-        "milestone_past": "태양광 단가 90% 하락, 전기차 대중화",
-        "milestone_now": "전고체 배터리 양산 경쟁 / 가정용 ESS 확산",
-        "milestone_next": "SMR 첫 상업 가동 (2028~2030)",
+        "score_min": 30, "score_max": 90,
+        "milestone_past": "재생에너지 설치 단가 90% 하락, 스마트 그리드 표준화 시작",
+        "milestone_now": "AI 데이터센터 전력 수요 폭발 → 전력망 업그레이드 긴급 착수",
+        "milestone_next": "SMR 첫 상업 가동, 전력 P2P 거래 플랫폼 상용화 (2028~2031)",
     },
     "computing": {
         "name": "컴퓨팅 자산화",
-        "icon": "🟣",
+        "icon": "🖥️",
         "theme": "GPU가 토지다",
-        "proxy": "SOXX",       # iShares Semiconductor ETF
+        "proxy":    "SOXX",        # 🇺🇸 iShares Semiconductor ETF
         "proxy_name": "SOXX",
+        "proxy_kr": "091160.KS",   # 🇰🇷 KODEX 반도체
+        "proxy_kr_name": "KODEX반도체",
         "higher_better": True,
+        "score_min": 20, "score_max": 90,
         "milestone_past": "클라우드 대중화, GPU 채굴→AI 수요 전환",
         "milestone_now": "분산 컴퓨팅 임대 마켓 급성장",
         "milestone_next": "컴퓨팅 지분 ETF/리츠 제도화 (2028~2031)",
     },
     "robotics": {
         "name": "피지컬 AI / 로보틱스",
-        "icon": "🟠",
-        "theme": "기계가 내 손발이 된다",
-        "proxy": "BOTZ",       # Global X Robotics & AI ETF
+        "icon": "🦾",
+        "theme": "소유한 로봇이 일하고 수익을 가져다 준다",
+        "proxy":    "BOTZ",        # 🇺🇸 Global X Robotics & AI ETF
         "proxy_name": "BOTZ",
+        "proxy_kr": "228790.KS",   # 🇰🇷 TIGER 로보틱스AI
+        "proxy_kr_name": "TIGER로보틱스",
         "higher_better": True,
+        "score_min": 20, "score_max": 85,
         "milestone_past": "산업용 로봇 암 표준화, 물류 자동화 대규모 도입",
         "milestone_now": "휴머노이드 로봇 공장 파일럿 단계",
         "milestone_next": "가정용 범용 로봇 첫 양산 (2029~2032)",
     },
     "biotech": {
         "name": "바이오테크 / 수명 자본",
-        "icon": "🟡",
+        "icon": "🧬",
         "theme": "인생 자체가 길어진다",
-        "proxy": "ARKG",       # ARK Genomic Revolution ETF
+        "proxy":    "ARKG",        # 🇺🇸 ARK Genomic Revolution ETF
         "proxy_name": "ARKG",
+        "proxy_kr": "143860.KS",   # 🇰🇷 KODEX 바이오
+        "proxy_kr_name": "KODEX바이오",
         "higher_better": True,
         "milestone_past": "게놈 분석 대중화, mRNA 백신 실증",
         "milestone_now": "CRISPR 유전자 편집 첫 임상 치료 승인",
@@ -59,102 +70,98 @@ DIRECTIONS = {
     },
     "food": {
         "name": "식량·농업 전환",
-        "icon": "🔴",
+        "icon": "🌾",
         "theme": "먹는 것의 생산 구조가 바뀐다",
-        "proxy": "MOO",        # VanEck Agribusiness ETF
+        "proxy":    "MOO",         # 🇺🇸 VanEck Agribusiness ETF
         "proxy_name": "MOO",
+        "proxy_kr": "097950.KS",   # 🇰🇷 CJ제일제당 (국내 식품·애그테크 대표)
+        "proxy_kr_name": "CJ제일제당",
         "higher_better": True,
         "milestone_past": "GMO 대규모 상용화, 정밀농업 시작",
         "milestone_now": "수직농장 확산, 배양육 소규모 판매 승인",
         "milestone_next": "배양육 일반 육류 수준 가격 경쟁력 (2028~2030)",
     },
-    "climate": {
-        "name": "기후·자원 자산",
-        "icon": "🟢",
-        "theme": "탄소·물·생태계가 화폐가 된다",
-        "proxy": "KRBN",       # KraneShares Global Carbon Strategy ETF
-        "proxy_name": "KRBN",
+    "water_resources": {
+        "name": "물·자원 자산화",
+        "icon": "💧",
+        "theme": "물이 다음 석유다",
+        "proxy":    "PHO",         # 🇺🇸 Invesco Water Resources ETF
+        "proxy_name": "PHO",
+        "proxy_kr": "284430.KS",   # 🇰🇷 KODEX 물
+        "proxy_kr_name": "KODEX물",
         "higher_better": True,
-        "milestone_past": "파리협정, K-ETS 시행, ESG 주류화",
-        "milestone_now": "자발적 탄소시장(VCM) 급성장",
-        "milestone_next": "탄소시장 국제 표준화 완성 (2027~2029)",
-    },
-    "space": {
-        "name": "우주 경제",
-        "icon": "🌌",
-        "theme": "지구 밖이 새 프론티어",
-        "proxy": "UFO",        # Procure Space ETF
-        "proxy_name": "UFO",
-        "higher_better": True,
-        "milestone_past": "팰컨9 재사용 성공, 스타링크 서비스 시작",
-        "milestone_now": "저궤도 위성 인터넷 글로벌 확산",
-        "milestone_next": "달 기지 첫 상주 운영 (2029~2033)",
+        "score_min": 40, "score_max": 88,  # 구조적 필수 인프라 → 하한 보정
+        "milestone_past": "파리협정, EU 탄소국경세(CBAM) 결정, ESG 주류화",
+        "milestone_now": "자발적 탄소시장(VCM) 급성장, 수자원 거래 파일럿 시작",
+        "milestone_next": "수자원 거래소 주요국 개설, 탄소시장 국제 표준화 완성 (2027~2030)",
     },
     "defi": {
         "name": "금융 시스템 재편",
-        "icon": "🟣",
-        "theme": "돈의 구조가 바뀐다",
-        "proxy": "BTC-USD",    # Bitcoin (암호화폐 금융 프록시)
+        "icon": "💎",
+        "theme": "프로그래밍 가능한 화폐로 금융 인프라를 직접 운영",
+        "proxy":    "BTC-USD",     # 🇺🇸 Bitcoin
         "proxy_name": "BTC",
+        "proxy_kr": "377300.KS",   # 🇰🇷 KODEX BTC선물H
+        "proxy_kr_name": "KODEX BTC선물",
         "higher_better": True,
         "milestone_past": "비트코인 탄생, DeFi 생태계, BTC ETF 승인",
-        "milestone_now": "주요국 CBDC 파일럿 운영",
-        "milestone_next": "실물자산 토큰화 법제화 (2028~2031)",
+        "milestone_now": "주요국 CBDC 파일럿 운영, 실물자산 토큰화 시범",
+        "milestone_next": "실물자산 토큰화 법제화, 주요국 CBDC 실거래 유통 (2027~2031)",
     },
-    "geopolitics": {
-        "name": "지정학 / 주권적 개인",
-        "icon": "🟠",
-        "theme": "어디에 있느냐가 운명을 바꾼다",
-        "proxy": "EWY",        # iShares MSCI South Korea (지정학적 한국 노출 프록시)
-        "proxy_name": "EWY",
+    "cyber": {
+        "name": "사이버보안·신뢰 인프라",
+        "icon": "🔐",
+        "theme": "디지털 세계의 성벽이 기본 인프라다",
+        "proxy":    "CIBR",        # 🇺🇸 First Trust NASDAQ Cybersecurity ETF
+        "proxy_name": "CIBR",
+        "proxy_kr": "396520.KS",   # 🇰🇷 KODEX 미국사이버보안나스닥
+        "proxy_kr_name": "KODEX사이버보안",
         "higher_better": True,
-        "milestone_past": "인터넷 국경 초월, 원격근무 글로벌 실험",
-        "milestone_now": "디지털 노마드 비자 30개국 이상",
-        "milestone_next": "복수 시민권 포트폴리오 서비스화 (2029~2032)",
+        "score_min": 42, "score_max": 90,  # 디지털 기반 인프라 → 하한 보정
+        "milestone_past": "솔라윈즈·콜로니얼 파이프라인 해킹 — 인프라 취약성 실증",
+        "milestone_now": "AI 기반 사이버 공격 급증, 각국 사이버 방어 의무화 입법",
+        "milestone_next": "양자 내성 암호화 표준 전환 완성 (2028~2031)",
+    },
+    "industrial_sovereignty": {
+        "name": "산업 주권·공급망 재편",
+        "icon": "🏭",
+        "theme": "어디서 만드느냐가 새로운 국력이다",
+        "proxy":    "ITA",         # 🇺🇸 iShares U.S. Aerospace & Defense ETF
+        "proxy_name": "ITA",
+        "proxy_kr": "012450.KS",   # 🇰🇷 한화에어로스페이스
+        "proxy_kr_name": "한화에어로",
+        "higher_better": True,
+        "score_min": 20, "score_max": 90,
+        "milestone_past": "미중 반도체 패권 경쟁, 공급망 리쇼어링 가속",
+        "milestone_now": "방산·반도체 주권 확보 경쟁, 유럽 전략 자율성 추구",
+        "milestone_next": "핵심 산업 공급망 완전 내재화, 방산 수출 구조 정착 (2028~2032)",
     },
     "ai_agents": {
         "name": "자율 비즈니스 / AI 에이전트",
         "icon": "🤖",
-        "theme": "나 대신 일하는 AI 소유",
-        "proxy": "QQQ",        # NASDAQ 100 (기술주/AI 프록시)
+        "theme": "나 대신 일하는 AI 소유 — Agent OS 시대",
+        "proxy":    "QQQ",         # 🇺🇸 NASDAQ 100 ETF
         "proxy_name": "QQQ",
+        "proxy_kr": "379810.KS",   # 🇰🇷 KODEX 나스닥100
+        "proxy_kr_name": "KODEX나스닥100",
         "higher_better": True,
         "milestone_past": "챗봇·자동화 등장, GPT-4 에이전트 가능성 실증",
-        "milestone_now": "AI 에이전트 마켓플레이스 초기 형성",
-        "milestone_next": "에이전트 마켓 성숙·표준화 (2027~2029)",
+        "milestone_now": "AI 에이전트 마켓플레이스 초기 형성, Agent OS 경쟁 시작",
+        "milestone_next": "에이전트 마켓 성숙·표준화, 에이전트 법인격 논의 (2027~2030)",
     },
-    "community": {
-        "name": "커뮤니티 / 사회 자본",
-        "icon": "🔴",
-        "theme": "신뢰 네트워크가 자산이 된다",
-        "proxy": "FCOM",       # Fidelity MSCI Communication Services ETF
-        "proxy_name": "FCOM",
+    "space": {
+        "name": "우주 경제",
+        "icon": "🚀",
+        "theme": "지구 밖이 새 프론티어",
+        "proxy":    "UFO",         # 🇺🇸 Procure Space ETF
+        "proxy_name": "UFO",
+        "proxy_kr": "422160.KS",   # 🇰🇷 KODEX 우주항공&방산
+        "proxy_kr_name": "KODEX우주항공",
         "higher_better": True,
-        "milestone_past": "소셜미디어로 개인 브랜드 측정 시작",
-        "milestone_now": "로컬 커뮤니티 공동 투자 플랫폼 등장",
-        "milestone_next": "DAO 기반 공동체 소유 인프라 제도화 (2027~2030)",
-    },
-    "institutional": {
-        "name": "제도·지정학 전환",
-        "icon": "🟤",
-        "theme": "허용 속도가 타임라인을 결정",
-        "proxy": "TLT",        # iShares 20+ Year Treasury Bond (제도 안정성 역프록시)
-        "proxy_name": "TLT",
-        "higher_better": False,  # TLT↑ = 불확실성↑ = 제도 전환 압력 높음
-        "milestone_past": "파리협정, GDPR, 미중 반도체 패권 경쟁",
-        "milestone_now": "AI 규제 프레임워크 각국 입법 경쟁",
-        "milestone_next": "AI 에이전트 법인격 논의 본격화 (2027~2030)",
-    },
-    "basic_income": {
-        "name": "기본소득 +α 설계",
-        "icon": "🟢",
-        "theme": "일하지 않아도 되는 구조",
-        "proxy": None,          # 복합 계산 (다른 방향성 평균)
-        "proxy_name": "복합",
-        "higher_better": True,
-        "milestone_past": "배당·임대 소득으로 첫 자산소득 시작",
-        "milestone_now": "복수 수입 채널 실험 단계",
-        "milestone_next": "자산소득으로 생활비 20~30% 충당 (2027~2029)",
+        "score_min": 20, "score_max": 80,  # 서사 강하나 수익화 초기 → 과대평가 방지
+        "milestone_past": "팰컨9 재사용 성공, 스타링크 서비스 시작",
+        "milestone_now": "저궤도 위성 인터넷 글로벌 확산, 상업 우주 정거장 착수",
+        "milestone_next": "달 기지 첫 상주 운영 (2029~2033)",
     },
 }
 
@@ -218,56 +225,56 @@ def _score_label(score: float) -> str:
 
 def fetch_future_indicators() -> dict[str, dict]:
     """
-    모든 방향성 지표 수집.
-    반환: {key: {score, mo1_pct, yr1_pct, latest, proxy, label, ...}}
+    모든 방향성 지표 수집 (미국장 + 국내장 각각).
+    반환: {key: {score, score_us, score_kr, mo1_pct, yr1_pct, mo1_pct_kr, yr1_pct_kr,
+                 latest, latest_kr, proxy, proxy_kr, label, label_kr, ...}}
     """
     result = {}
-    scores_for_composite = []
 
     for key, d in DIRECTIONS.items():
-        if d["proxy"] is None:
-            # basic_income은 나중에 채움
-            result[key] = {
-                "score": 50,
-                "mo1_pct": 0.0,
-                "yr1_pct": 0.0,
-                "latest": None,
-                "proxy": d["proxy_name"],
-                "label": "유지",
-                "name": d["name"],
-                "icon": d["icon"],
-                "theme": d["theme"],
-                "milestone_past": d["milestone_past"],
-                "milestone_now": d["milestone_now"],
-                "milestone_next": d["milestone_next"],
-            }
-            continue
+        # 🇺🇸 미국장
+        closes_us = _fetch_yahoo_closes(d["proxy"], "1y")
+        mom_us = _momentum_score(closes_us, d["higher_better"])
+        time.sleep(0.3)
 
-        closes = _fetch_yahoo_closes(d["proxy"], "1y")
-        momentum = _momentum_score(closes, d["higher_better"])
-        score = momentum["score"]
-        scores_for_composite.append(score)
+        # 🇰🇷 국내장
+        proxy_kr = d.get("proxy_kr")
+        if proxy_kr:
+            closes_kr = _fetch_yahoo_closes(proxy_kr, "1y")
+            mom_kr = _momentum_score(closes_kr, d["higher_better"])
+            time.sleep(0.3)
+        else:
+            mom_kr = {"score": None, "mo1_pct": None, "yr1_pct": None, "latest": None}
+
+        # 방향성별 상한/하한 보정
+        s_min = d.get("score_min", 5)
+        s_max = d.get("score_max", 95)
+        score_us = round(max(s_min, min(s_max, mom_us["score"])), 1)
+        score_kr = round(max(s_min, min(s_max, mom_kr["score"])), 1) if mom_kr["score"] is not None else None
+        # 대표 score: US 기준 (히스토리 차트 연속성 유지)
+        score = score_us
 
         result[key] = {
-            **momentum,
-            "proxy": d["proxy_name"],
-            "label": _score_label(score),
-            "name": d["name"],
-            "icon": d["icon"],
-            "theme": d["theme"],
-            "milestone_past": d["milestone_past"],
-            "milestone_now": d["milestone_now"],
-            "milestone_next": d["milestone_next"],
+            "score":       score,
+            "score_us":    score_us,
+            "score_kr":    score_kr,
+            "mo1_pct":     mom_us["mo1_pct"],
+            "yr1_pct":     mom_us["yr1_pct"],
+            "latest":      mom_us["latest"],
+            "mo1_pct_kr":  mom_kr["mo1_pct"],
+            "yr1_pct_kr":  mom_kr["yr1_pct"],
+            "latest_kr":   mom_kr["latest"],
+            "proxy":       d["proxy_name"],
+            "proxy_kr":    d.get("proxy_kr_name"),
+            "label":       _score_label(score_us),
+            "label_kr":    _score_label(score_kr) if score_kr is not None else "N/A",
+            "name":        d["name"],
+            "icon":        d["icon"],
+            "theme":       d["theme"],
+            "milestone_past":  d["milestone_past"],
+            "milestone_now":   d["milestone_now"],
+            "milestone_next":  d["milestone_next"],
         }
-        time.sleep(0.3)  # Yahoo Finance 부하 방지
-
-    # basic_income: 다른 방향성 평균
-    if scores_for_composite:
-        composite = round(sum(scores_for_composite) / len(scores_for_composite), 1)
-    else:
-        composite = 50
-    result["basic_income"]["score"] = composite
-    result["basic_income"]["label"] = _score_label(composite)
 
     return result
 
@@ -275,19 +282,84 @@ def fetch_future_indicators() -> dict[str, dict]:
 # ── 추천 포트폴리오 정의 ─────────────────────────────────────────────────
 # 각 방향성별 추천 진입 ETF/자산과 추천 시점 (현재 ✅ 포지션 기준)
 PORTFOLIO_DEFS = {
-    "energy":       {"symbol": "ICLN",    "name": "iShares Clean Energy ETF",     "entry_date": "2023-01-03",  "reason": "IRA 법안 통과 후 클린에너지 전환 가속 확인"},
-    "computing":    {"symbol": "SOXX",    "name": "iShares Semiconductor ETF",    "entry_date": "2022-10-14",  "reason": "반도체 사이클 저점, AI 수요 폭발 직전"},
-    "robotics":     {"symbol": "BOTZ",    "name": "Global X Robotics & AI ETF",   "entry_date": "2023-01-03",  "reason": "ChatGPT 이후 물리 AI 가속화 신호"},
-    "biotech":      {"symbol": "ARKG",    "name": "ARK Genomic Revolution ETF",   "entry_date": "2023-06-01",  "reason": "CRISPR 치료 임상 성공 시점"},
-    "food":         {"symbol": "MOO",     "name": "VanEck Agribusiness ETF",      "entry_date": "2023-01-03",  "reason": "식량 안보 이슈 부각, 애그테크 관심 급증"},
-    "climate":      {"symbol": "KRBN",    "name": "KraneShares Global Carbon ETF","entry_date": "2022-01-03",  "reason": "탄소시장 제도화 가속, 글로벌 탄소세 논의 본격화"},
-    "space":        {"symbol": "UFO",     "name": "Procure Space ETF",            "entry_date": "2023-01-03",  "reason": "스타링크 글로벌 확산, 우주경제 원년"},
-    "defi":         {"symbol": "BTC-USD", "name": "Bitcoin",                      "entry_date": "2023-01-03",  "reason": "FTX 붕괴 저점, BTC ETF 승인 기대 구간"},
-    "geopolitics":  {"symbol": "EWY",     "name": "iShares MSCI South Korea ETF", "entry_date": "2023-01-03",  "reason": "반도체·K-콘텐츠 수출 회복 기대"},
-    "ai_agents":    {"symbol": "QQQ",     "name": "NASDAQ 100 ETF",               "entry_date": "2023-01-03",  "reason": "ChatGPT 출시 직후 AI 에이전트 시대 개막"},
-    "community":    {"symbol": "FCOM",    "name": "Fidelity Comm. Services ETF",  "entry_date": "2023-01-03",  "reason": "소셜 플랫폼 수익성 회복, 커뮤니티 자산화 시작"},
-    "institutional":{"symbol": "TLT",    "name": "iShares 20+ Yr Treasury ETF",  "entry_date": "2023-10-23",  "reason": "연준 금리 피크아웃 신호, 채권 저점"},
-    "basic_income": {"symbol": "VT",      "name": "Vanguard Total World ETF",     "entry_date": "2023-01-03",  "reason": "글로벌 분산 자동 재투자 복리 기반"},
+    # 🇺🇸 미국장 (symbol_us) / 🇰🇷 국내장 (symbol_kr)
+    "power_grid": {
+        "symbol": "XLU",          "name": "Utilities Select Sector SPDR",
+        "symbol_kr": "015760.KS", "name_kr": "한국전력(KEPCO)",
+        "entry_date": "2024-01-02",  "entry_date_kr": "2024-01-02",
+        "reason": "AI 데이터센터 전력 수요 폭발 — 전력 인프라 수혜 확인",
+        "reason_kr": "AI·데이터센터 국내 전력 공급 의무 확대 수혜",
+    },
+    "computing": {
+        "symbol": "SOXX",         "name": "iShares Semiconductor ETF",
+        "symbol_kr": "091160.KS", "name_kr": "KODEX 반도체",
+        "entry_date": "2022-10-14", "entry_date_kr": "2022-10-14",
+        "reason": "반도체 사이클 저점, AI 수요 폭발 직전",
+        "reason_kr": "삼성·SK하이닉스 중심 반도체 반등 구간",
+    },
+    "robotics": {
+        "symbol": "BOTZ",         "name": "Global X Robotics & AI ETF",
+        "symbol_kr": "228790.KS", "name_kr": "TIGER 로보틱스AI",
+        "entry_date": "2023-01-03", "entry_date_kr": "2023-01-03",
+        "reason": "ChatGPT 이후 물리 AI 가속화 신호",
+        "reason_kr": "국내 로보틱스·자동화 수요 부각",
+    },
+    "biotech": {
+        "symbol": "ARKG",         "name": "ARK Genomic Revolution ETF",
+        "symbol_kr": "143860.KS", "name_kr": "KODEX 바이오",
+        "entry_date": "2023-06-01", "entry_date_kr": "2023-06-01",
+        "reason": "CRISPR 치료 임상 성공 시점",
+        "reason_kr": "K-바이오 수출 급증, 국내 임상 성과 확인",
+    },
+    "food": {
+        "symbol": "MOO",          "name": "VanEck Agribusiness ETF",
+        "symbol_kr": "097950.KS", "name_kr": "CJ제일제당",
+        "entry_date": "2023-01-03", "entry_date_kr": "2023-01-03",
+        "reason": "식량 안보 이슈 부각, 애그테크 관심 급증",
+        "reason_kr": "국내 식품·대체단백질 선도 기업",
+    },
+    "water_resources": {
+        "symbol": "PHO",          "name": "Invesco Water Resources ETF",
+        "symbol_kr": "284430.KS", "name_kr": "KODEX 물",
+        "entry_date": "2023-01-03", "entry_date_kr": "2023-01-03",
+        "reason": "수자원 부족 위기 가시화, 물 인프라 투자 확대",
+        "reason_kr": "국내 수처리·환경 인프라 투자 확대",
+    },
+    "defi": {
+        "symbol": "BTC-USD",      "name": "Bitcoin",
+        "symbol_kr": "377300.KS", "name_kr": "KODEX BTC선물H",
+        "entry_date": "2023-01-03", "entry_date_kr": "2024-01-02",
+        "reason": "FTX 붕괴 저점, BTC ETF 승인 기대 구간",
+        "reason_kr": "국내 BTC 선물 ETF 상장 초기",
+    },
+    "cyber": {
+        "symbol": "CIBR",         "name": "First Trust NASDAQ Cybersecurity ETF",
+        "symbol_kr": "396520.KS", "name_kr": "KODEX 미국사이버보안나스닥",
+        "entry_date": "2024-01-02", "entry_date_kr": "2024-01-02",
+        "reason": "AI 해킹 위협 급증, 사이버 방어 의무화 입법 가속",
+        "reason_kr": "국내 투자자용 사이버보안 ETF 초기 진입",
+    },
+    "industrial_sovereignty": {
+        "symbol": "ITA",          "name": "iShares U.S. Aerospace & Defense ETF",
+        "symbol_kr": "012450.KS", "name_kr": "한화에어로스페이스",
+        "entry_date": "2022-02-24", "entry_date_kr": "2022-02-24",
+        "reason": "러우 전쟁 발발 — 방산·공급망 주권 투자 가속",
+        "reason_kr": "K-방산 수출 급등 선도 기업",
+    },
+    "ai_agents": {
+        "symbol": "QQQ",          "name": "NASDAQ 100 ETF",
+        "symbol_kr": "379810.KS", "name_kr": "KODEX 나스닥100",
+        "entry_date": "2023-01-03", "entry_date_kr": "2023-01-03",
+        "reason": "ChatGPT 출시 직후 AI 에이전트 시대 개막",
+        "reason_kr": "나스닥100 국내 환헤지 버전",
+    },
+    "space": {
+        "symbol": "UFO",          "name": "Procure Space ETF",
+        "symbol_kr": "422160.KS", "name_kr": "KODEX 우주항공&방산",
+        "entry_date": "2023-01-03", "entry_date_kr": "2023-06-01",
+        "reason": "스타링크 글로벌 확산, 우주경제 원년",
+        "reason_kr": "국내 우주·방산 복합 ETF 상장",
+    },
 }
 
 INVEST_KRW = 1_000_000  # 방향성당 100만원
@@ -316,54 +388,47 @@ def _fetch_price_at_date(symbol: str, date_str: str) -> float | None:
         return None
 
 
+def _portfolio_perf_one(symbol: str, entry_date: str, etf_name: str, reason: str) -> dict:
+    """단일 종목 수익률 계산 헬퍼"""
+    closes_recent = _fetch_yahoo_closes(symbol, "5d")
+    current_price = round(closes_recent[-1], 4) if closes_recent else None
+    time.sleep(0.3)
+    entry_price = _fetch_price_at_date(symbol, entry_date)
+    time.sleep(0.3)
+    if current_price and entry_price:
+        return_pct = round((current_price / entry_price - 1) * 100, 2)
+        current_value = round(INVEST_KRW * (1 + return_pct / 100))
+        profit = current_value - INVEST_KRW
+    else:
+        return_pct = None
+        current_value = INVEST_KRW
+        profit = 0
+    return {
+        "symbol": symbol, "etf_name": etf_name, "entry_date": entry_date,
+        "entry_price": entry_price, "current_price": current_price,
+        "return_pct": return_pct, "invest_krw": INVEST_KRW,
+        "current_value_krw": current_value, "profit_krw": profit,
+        "reason": reason,
+    }
+
+
 def fetch_portfolio_performance() -> list[dict]:
     """
-    각 방향성 추천 ETF의 진입일 → 현재 수익률 계산.
-    반환: [{key, name, icon, symbol, etf_name, entry_date, entry_price,
-             current_price, return_pct, invest_krw, current_value_krw, reason}]
+    각 방향성 추천 ETF의 진입일 → 현재 수익률 계산 (미국장 + 국내장).
+    반환: [{key, name, icon, us:{...}, kr:{...}}]
     """
-    INVEST_USD = INVEST_KRW / 1350  # 환율 약 1350원 기준 USD 환산
-
     rows = []
     for key, pdef in PORTFOLIO_DEFS.items():
         d = DIRECTIONS.get(key, {})
-        symbol = pdef["symbol"]
-
-        # 현재가 (최신 1일)
-        closes_recent = _fetch_yahoo_closes(symbol, "5d")
-        current_price = round(closes_recent[-1], 4) if closes_recent else None
-        time.sleep(0.3)
-
-        # 진입가 (추천 날짜 기준)
-        entry_price = _fetch_price_at_date(symbol, pdef["entry_date"])
-        time.sleep(0.3)
-
-        if current_price and entry_price:
-            return_pct = round((current_price / entry_price - 1) * 100, 2)
-            # USD 기준 수익률을 KRW에 적용 (환율 변동 미반영 — 단순화)
-            current_value = round(INVEST_KRW * (1 + return_pct / 100))
-            profit = current_value - INVEST_KRW
-        else:
-            return_pct = None
-            current_value = INVEST_KRW
-            profit = 0
-
+        us = _portfolio_perf_one(pdef["symbol"], pdef["entry_date"], pdef["name"], pdef["reason"])
+        kr = _portfolio_perf_one(pdef["symbol_kr"], pdef["entry_date_kr"], pdef["name_kr"], pdef["reason_kr"])
         rows.append({
-            "key":              key,
-            "name":             d.get("name", key),
-            "icon":             d.get("icon", ""),
-            "symbol":           symbol,
-            "etf_name":         pdef["name"],
-            "entry_date":       pdef["entry_date"],
-            "entry_price":      entry_price,
-            "current_price":    current_price,
-            "return_pct":       return_pct,
-            "invest_krw":       INVEST_KRW,
-            "current_value_krw":current_value,
-            "profit_krw":       profit,
-            "reason":           pdef["reason"],
+            "key":  key,
+            "name": d.get("name", key),
+            "icon": d.get("icon", ""),
+            "us":   us,
+            "kr":   kr,
         })
-
     return rows
 
 
