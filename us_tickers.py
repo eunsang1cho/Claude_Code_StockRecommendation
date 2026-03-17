@@ -93,5 +93,38 @@ def get_us_ticker_market() -> dict[str, str]:
     return result
 
 
+def get_russell2000_tickers() -> dict[str, str]:
+    """
+    iShares IWM ETF 홀딩스에서 Russell 2000 티커 실시간 수집.
+    반환: {ticker: 'US_RUSSELL'}
+    실패 시 빈 dict 반환.
+    """
+    import urllib.request, csv as _csv
+    url = (
+        "https://www.ishares.com/us/products/239710/ishares-russell-2000-etf"
+        "/1467271812596.ajax?fileType=csv&fileName=IWM_holdings&dataType=fund"
+    )
+    try:
+        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+        with urllib.request.urlopen(req, timeout=20) as r:
+            data = r.read().decode('utf-8', errors='ignore')
+        lines = data.strip().split('\n')
+        header_idx = next(
+            (i for i, l in enumerate(lines) if 'Ticker' in l and 'Name' in l), None
+        )
+        if header_idx is None:
+            return {}
+        result: dict[str, str] = {}
+        reader = _csv.DictReader(lines[header_idx:])
+        for row in reader:
+            t = row.get('Ticker', '').strip()
+            if t and t != '-' and t != 'USD' and '.' not in t:
+                result[t] = 'US_RUSSELL'
+        return result
+    except Exception as e:
+        print(f'[Russell2000] 티커 수집 실패: {e}')
+        return {}
+
+
 # 전체 티커 목록 (중복 제거, 순서 유지)
 ALL_US_TICKERS: list[str] = list(dict.fromkeys(NASDAQ100 + SP500_ONLY))

@@ -793,10 +793,14 @@ def _base_ok_us(df: pd.DataFrame, price: float, ma240: float) -> bool:
     return True
 
 
-def scan_all_us(ticker_market: dict[str, str]) -> list[dict]:
+def scan_all_us(ticker_market: dict[str, str],
+                us_big_pct: float = 0.10,
+                us_vol_mult: float = 5.0) -> list[dict]:
     """
     미국 주식 패턴 스캔. 기존 알고리즘 재사용, MA240 우상향 조건 적용.
     ticker_market: {ticker: market}  예) {'NVDA': 'US_NASDAQ'}
+    us_big_pct: 대양봉 기준 (기본 10%, 한국 15%보다 완화)
+    us_vol_mult: 거래량 배수 기준 (기본 5배, 한국 10배보다 완화)
     """
     from database import get_algo_config
     cfg_early       = get_algo_config("골삼이(상승초입)")
@@ -805,6 +809,11 @@ def scan_all_us(ticker_market: dict[str, str]) -> list[dict]:
     cfg_red         = get_algo_config("레드삼각")
     cfg_ma_compress = get_algo_config("MA압축지지")
     cfg_ten_bagger  = get_algo_config("텐배거")
+
+    # US 전용 파라미터로 오버라이드
+    for cfg in (cfg_early, cfg_golsami, cfg_golden, cfg_red, cfg_ma_compress, cfg_ten_bagger):
+        cfg['big_pct']  = us_big_pct
+        cfg['vol_mult'] = us_vol_mult
 
     results: list[dict] = []
 

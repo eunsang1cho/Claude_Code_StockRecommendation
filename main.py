@@ -60,6 +60,7 @@ def _model_prefix() -> str:
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from data_fetcher import get_candidates_cached, get_stock_name, get_us_candidates
+from us_tickers import get_russell2000_tickers
 from scanner import scan_all, scan_all_plus, scan_all_us, format_result
 from watchlist import update_from_scan, add_stock, remove_stock, get_all
 from sector_info import enrich_results
@@ -167,24 +168,28 @@ async def do_scan(app: Application, is_manual: bool = False) -> None:
 
 
 async def do_scan_us(app: Application, is_manual: bool = False) -> None:
-    """🇺🇸 미국 주식 패턴 스캔 (S&P500 + NASDAQ100)"""
+    """🇺🇸 미국 주식 패턴 스캔 (Russell 2000 소형주)"""
     prefix = "🔍 수동" if is_manual else "🤖 자동"
     msg = await app.bot.send_message(
         chat_id=USER_ID,
-        text=f"{prefix} 🇺🇸 미국 스캔 시작\\!\n⏳ 후보 종목 수집 중\\.\\.\\.\n\\(첫 실행 시 약 5\\~10분 소요\\)",
+        text=f"{prefix} 🇺🇸 미국 스캔 시작\\!\n⏳ Russell 2000 티커 수집 중\\.\\.\\.",
         parse_mode="MarkdownV2",
     )
     try:
-        candidates: dict[str, str] = await asyncio.to_thread(
-            get_us_candidates, 70, is_manual
-        )
+        candidates: dict[str, str] = await asyncio.to_thread(get_russell2000_tickers)
+        if not candidates:
+            await msg.edit_text("❌ Russell 2000 티커 수집 실패")
+            return
         await msg.edit_text(
             f"{prefix} 🇺🇸 미국 스캔 중\\.\\.\\.\n"
-            f"📋 후보: {len(candidates)}개 종목\n"
-            f"⏳ 패턴 탐지 중\\.\\.\\.",
+            f"📋 Russell 2000: {len(candidates)}개 종목\n"
+            f"⏳ 패턴 탐지 중\\. \\(10\\~20분 소요\\)",
             parse_mode="MarkdownV2",
         )
-        results: list[dict] = await asyncio.to_thread(scan_all_us, candidates)
+        # US 완화 기준: 대양봉 10%, 거래량 5배
+        results: list[dict] = await asyncio.to_thread(
+            scan_all_us, candidates, 0.10, 5.0
+        )
 
         if results:
             await asyncio.to_thread(database.save_scan, results, len(candidates))
@@ -200,7 +205,7 @@ async def do_scan_us(app: Application, is_manual: bool = False) -> None:
         )
         for r in results:
             try:
-                mkt_tag = "🇺🇸NASDAQ" if r.get("market") == "US_NASDAQ" else "🇺🇸S&P500"
+                mkt_tag = "🇺🇸NASDAQ" if r.get("market") == "US_NASDAQ" else ("🇺🇸S&P500" if r.get("market") == "US_SP500" else "🇺🇸Russell")
                 plain = (
                     f"[{mkt_tag}] {r['pattern']} 감지: {r['name']} ({r['ticker']})\n"
                     f"현재가: ${r['current']:,} / 신뢰도: {r['conf']}%\n"

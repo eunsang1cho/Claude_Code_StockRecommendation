@@ -201,7 +201,7 @@ def api_latest() -> JSONResponse:
 def api_history(days: int = 30, market: str = '') -> JSONResponse:
     days = max(1, min(days, 365))
     # market 화이트리스트 검증
-    _VALID_MARKETS = {'', 'KOSPI', 'KOSDAQ', 'KR', 'US_NASDAQ', 'US_SP500', 'US'}
+    _VALID_MARKETS = {'', 'KOSPI', 'KOSDAQ', 'KR', 'US_NASDAQ', 'US_SP500', 'US_RUSSELL', 'US'}
     if market not in _VALID_MARKETS:
         market = ''
     return JSONResponse(database.get_history(days, market))
@@ -209,7 +209,7 @@ def api_history(days: int = 30, market: str = '') -> JSONResponse:
 
 @app.get("/api/stocks")
 def api_stocks(market: str = '') -> JSONResponse:
-    _VALID_MARKETS = {'', 'KOSPI', 'KOSDAQ', 'KR', 'US_NASDAQ', 'US_SP500', 'US'}
+    _VALID_MARKETS = {'', 'KOSPI', 'KOSDAQ', 'KR', 'US_NASDAQ', 'US_SP500', 'US_RUSSELL', 'US'}
     if market not in _VALID_MARKETS:
         market = ''
     return JSONResponse(database.get_stock_tracking(market))
