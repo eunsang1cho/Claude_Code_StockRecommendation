@@ -62,6 +62,18 @@ STATUS_THRESHOLDS = {
     'ust2y':       lambda v: _status_above(v, [(5.0,'위험'),(4.5,'경고'),(4.0,'관망'),(3.5,'긍정')]),
     'kre':         None,  # MoM 변화율로 계산
     'xlf':         None,  # MoM 변화율로 계산
+    # fear_greed: CNN F&G (0=극단공포,100=극단탐욕) — 역발상 지표
+    # 75↑ 극단탐욕=과열위험, 25↓ 극단공포=역발상매수기회(최상)
+    'fear_greed':  lambda v: ('위험' if v >= 75 else '경고' if v >= 55 else
+                              '관망' if v >= 45 else '긍정' if v >= 25 else '최상'),
+    # soxx: 필라델피아 반도체 ETF — 경기선행지표 (높을수록 안전)
+    'soxx':        lambda v: _status_below(v, [(200,'위험'),(260,'경고'),(320,'관망'),(420,'긍정')],
+                             default='최상'),
+    # rrp: Fed 역RP잔고 T$ — 높을수록 과잉유동성(버블), 너무낮으면 유동성 소진
+    'rrp':         lambda v: ('경고' if v > 1.0 else '긍정' if v > 0.3 else '관망'),
+    # tga: 미 재무부 잔고 B$ — 너무낮으면 정부지출 예정(단기부양), 높으면 긴축
+    'tga':         lambda v: ('위험' if v < 200 else '경고' if v < 400 else
+                              '관망' if v < 700 else '긍정'),
 }
 
 
@@ -97,7 +109,12 @@ def _yahoo_latest(symbol: str, realtime: bool = False) -> float | None:
     try:
         r = requests.get(url, params=params, headers=headers, timeout=12)
         r.raise_for_status()
-        closes = r.json()['chart']['result'][0]['indicators']['quote'][0]['close']
+        js = r.json()['chart']['result'][0]
+        quote = js['indicators']['quote'][0]
+        # 일부 선물/인덱스 심볼은 'close' 대신 'adjclose' 혹은 다른 필드 반환
+        closes = (quote.get('close') or
+                  [v['adjclose'] for v in js['indicators'].get('adjclose', [{}])] or
+                  [])
         for v in reversed(closes):
             if v is not None:
                 return round(v, 4)

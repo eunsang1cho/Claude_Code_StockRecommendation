@@ -397,6 +397,8 @@ def _calc_crash_score(data: dict) -> float:
         "gold":         5,
         # 위험선호 프록시
         "btc":          5,
+        # 외국인 수급 — 코스피 방향성 강한 선행지표
+        "foreign_flow": 7,
     }
     wsum, wmax = 0, 0
     for k, w in WEIGHTS.items():
