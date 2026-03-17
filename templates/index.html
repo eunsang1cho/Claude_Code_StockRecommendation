@@ -1068,8 +1068,14 @@ td { padding: 6px 10px; font-size: 13px; vertical-align: middle; }
       <div style="font-size:14px;font-weight:700">🧭 미래방향성 지표</div>
       <div id="future-last-update" style="font-size:10px;color:var(--text-muted);margin-top:2px">로딩 중...</div>
     </div>
-    <div style="display:flex;gap:4px;align-items:center">
-      <span style="font-size:11px;color:var(--text-muted)">매일 04:30 자동 업데이트</span>
+    <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+      <select id="future-sort-select" onchange="onFutureSortChange()"
+        style="font-size:11px;padding:4px 6px;background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:6px;cursor:pointer">
+        <option value="default">📋 기본 순서</option>
+        <option value="us_desc">🇺🇸 US 모멘텀 높은순</option>
+        <option value="kr_desc">🇰🇷 한국 모멘텀 높은순</option>
+      </select>
+      <span style="font-size:11px;color:var(--text-muted)">매일 04:30 자동</span>
       <button class="btn" id="future-refresh-btn" onclick="refreshFuture()" style="padding:5px 8px" title="지금 수집">🔄</button>
     </div>
   </div>
@@ -2657,11 +2663,37 @@ function _positionRows(positions) {
   }).join('');
 }
 
+function onFutureSortChange() {
+  if (window._futureLastData) {
+    const {cur, prev, history} = window._futureLastData;
+    renderFutureAccordion(cur, prev, history);
+  }
+}
+
 function renderFutureAccordion(cur, prev, history) {
-  const ORDER = ['power_grid','computing','robotics','biotech','food','water_resources',
-                 'defi','cyber','industrial_sovereignty','ai_agents','space'];
+  // 마지막 데이터 저장 (재정렬용)
+  window._futureLastData = {cur, prev, history};
+
+  const BASE_ORDER = ['power_grid','computing','robotics','biotech','food','water_resources',
+                      'defi','cyber','industrial_sovereignty','ai_agents','space'];
   const LABEL = {power_grid:'A',computing:'B',robotics:'C',biotech:'D',food:'E',water_resources:'F',
                  defi:'G',cyber:'H',industrial_sovereignty:'I',ai_agents:'J',space:'K'};
+
+  const sortMode = document.getElementById('future-sort-select')?.value || 'default';
+  let ORDER = [...BASE_ORDER];
+  if (sortMode === 'us_desc') {
+    ORDER.sort((a, b) => {
+      const sa = Math.round(cur[a]?.score_us ?? cur[a]?.score ?? 50);
+      const sb = Math.round(cur[b]?.score_us ?? cur[b]?.score ?? 50);
+      return sb - sa;
+    });
+  } else if (sortMode === 'kr_desc') {
+    ORDER.sort((a, b) => {
+      const sa = cur[a]?.score_kr ?? 0;
+      const sb = cur[b]?.score_kr ?? 0;
+      return sb - sa;
+    });
+  }
 
   const items = ORDER.map(k => {
     const v = cur[k]; if (!v) return '';
@@ -2731,26 +2763,26 @@ function renderFutureAccordion(cur, prev, history) {
           <div style="font-size:12px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${v.name}</div>
           <div style="font-size:10px;color:var(--text-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${detail.desc||v.theme||''}</div>
         </div>
-        <div style="display:flex;align-items:center;gap:6px;flex-shrink:0">
+        <div style="display:flex;align-items:stretch;gap:6px;flex-shrink:0">
           <!-- 🇺🇸 미국장 -->
-          <div style="text-align:center;min-width:46px">
-            <div style="font-size:8px;color:var(--text-muted);margin-bottom:1px">🇺🇸&nbsp;${v.proxy||''}</div>
+          <div style="text-align:center;min-width:50px;display:flex;flex-direction:column;justify-content:space-between">
+            <div style="font-size:8px;color:var(--text-muted);height:12px;line-height:12px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis">🇺🇸&nbsp;${v.proxy||''}</div>
             <div style="font-size:17px;font-weight:800;color:${colorUs};line-height:1">${scoreUs}</div>
-            <div style="font-size:8px;color:${colorUs}">${labelUs} ${deltaStr}</div>
-            <div style="font-size:8px;color:var(--text-muted);margin-top:1px">
+            <div style="font-size:8px;color:${colorUs};height:12px;line-height:12px">${labelUs} ${deltaStr}</div>
+            <div style="font-size:8px;color:var(--text-muted)">
               <span style="color:${parseFloat(mo1)>=0?'#4ade80':'#f87171'}">${mo1}%</span>
               <span style="color:var(--text-muted)"> / </span>
               <span style="color:${parseFloat(yr1)>=0?'#4ade80':'#f87171'}">${yr1}%</span>
             </div>
           </div>
           <!-- 구분선 -->
-          <div style="width:1px;height:36px;background:var(--border);flex-shrink:0"></div>
+          <div style="width:1px;align-self:stretch;background:var(--border);flex-shrink:0"></div>
           <!-- 🇰🇷 국내장 -->
-          <div style="text-align:center;min-width:46px">
-            <div style="font-size:8px;color:var(--text-muted);margin-bottom:1px">🇰🇷&nbsp;${v.proxy_kr||''}</div>
+          <div style="text-align:center;min-width:50px;display:flex;flex-direction:column;justify-content:space-between">
+            <div style="font-size:8px;color:var(--text-muted);height:12px;line-height:12px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis">🇰🇷&nbsp;${v.proxy_kr||''}</div>
             <div style="font-size:17px;font-weight:800;color:${colorKr};line-height:1">${scoreKr??'--'}</div>
-            <div style="font-size:8px;color:${colorKr}">${labelKr}</div>
-            <div style="font-size:8px;color:var(--text-muted);margin-top:1px">
+            <div style="font-size:8px;color:${colorKr};height:12px;line-height:12px">${labelKr}</div>
+            <div style="font-size:8px;color:var(--text-muted)">
               <span style="color:${parseFloat(mo1Kr)>=0?'#4ade80':'#f87171'}">${mo1Kr}%</span>
               <span style="color:var(--text-muted)"> / </span>
               <span style="color:${parseFloat(yr1Kr)>=0?'#4ade80':'#f87171'}">${yr1Kr}%</span>
@@ -4899,9 +4931,9 @@ function _showScoreModal(WEIGHTS, LABELS, THRESHOLDS, EVIDENCE) {
     </div>
     <div style="font-size:12px;font-weight:700;margin-bottom:4px;color:#7c83fd">백테스트 검증 결과</div>
     <div style="font-size:11px;color:#e2e8f0;background:#242740;border-radius:8px;padding:8px;margin-bottom:12px">
-      1주 선행 정확도: <b style="color:#4ade80">71.5%</b><br>
-      2주 선행 정확도: <b style="color:#4ade80">76.9%</b><br>
-      4주 선행 정확도: <b style="color:#4ade80">79.0%</b><br>
+      1주 선행 정확도: <b style="color:#4ade80">70.9%</b><br>
+      2주 선행 정확도: <b style="color:#4ade80">77.0%</b><br>
+      4주 선행 정확도: <b style="color:#4ade80">80.4%</b><br>
       <span style="font-size:10px;color:#8892b0">기간: 최근 1년 / 244일 KOSPI 실데이터 기준</span>
     </div>
     <div style="font-size:12px;font-weight:700;margin-bottom:6px;color:#7c83fd">지표별 가중치 (총 ${totalW}pt)</div>
