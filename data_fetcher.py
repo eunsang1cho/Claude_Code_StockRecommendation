@@ -1,6 +1,6 @@
 """
 data_fetcher.py
-pykrx 기반 주식 데이터 수집 + 후보 종목 필터
+pykrx 기반 주식 데이터 수집 + 후보 종목 필터 (한국 + 미국)
 """
 
 import json
@@ -12,8 +12,9 @@ import pandas as pd
 from pykrx import stock
 
 DIR = os.path.dirname(os.path.abspath(__file__))
-CACHE_FILE = os.path.join(DIR, "candidates_cache.json")
-CACHE_HOURS = 12
+CACHE_FILE     = os.path.join(DIR, "candidates_cache.json")
+US_CACHE_FILE  = os.path.join(DIR, "us_candidates_cache.json")
+CACHE_HOURS    = 12
 
 
 # ── 후보 종목 (최근 N일 내 장대양봉 발생) ─────────────────────────────
@@ -204,3 +205,111 @@ def get_market_cap(ticker: str) -> int:
             pass
         time.sleep(0.1)
     return 0
+
+
+# ── 미국 주식 (yfinance) ───────────────────────────────────────────────
+
+def get_ohlcv_us(ticker: str, days: int = 390) -> pd.DataFrame | None:
+    """미국 주식 OHLCV (yfinance). days ≈ 1년6개월 → MA240 계산 충분."""
+    try:
+        import yfinance as yf
+        period = '2y' if days >= 365 else '1y'
+        df = yf.download(ticker, period=period, interval='1d',
+                         progress=False, auto_adjust=True)
+        if df is None or df.empty:
+            return None
+        # MultiIndex 컬럼 평탄화 (yfinance 0.2.x 이상)
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = df.columns.get_level_values(0)
+        df = df[['Open', 'High', 'Low', 'Close', 'Volume']].dropna()
+        df = df[df['Volume'] > 0]
+        return df
+    except Exception as e:
+        print(f'[US OHLCV] {ticker} 오류: {e}')
+        return None
+
+
+def get_us_candidates(days_back: int = 70,
+                      force_refresh: bool = False) -> dict[str, str]:
+    """
+    최근 days_back일 내 10%+ 장대양봉이 있는 US 종목 반환.
+    반환: {ticker: market}  예) {'NVDA': 'US_NASDAQ', 'JPM': 'US_SP500'}
+
+    Phase 1: yfinance batch 3개월 데이터로 빠른 필터
+    Phase 2: 캐시 (12시간 유효)
+    """
+    if not force_refresh and os.path.exists(US_CACHE_FILE):
+        try:
+            with open(US_CACHE_FILE, 'r') as f:
+                cache = json.load(f)
+            cached_at = datetime.fromisoformat(cache['timestamp'])
+            if (datetime.now() - cached_at).total_seconds() < CACHE_HOURS * 3600:
+                return cache['candidates']
+        except Exception:
+            pass
+
+    from us_tickers import get_us_ticker_market, ALL_US_TICKERS
+    ticker_market = get_us_ticker_market()
+    candidates: dict[str, str] = {}
+
+    try:
+        import yfinance as yf
+        print(f'[US후보] {len(ALL_US_TICKERS)}개 종목 batch 다운로드 중...')
+
+        # 200개씩 배치 처리 (rate limit 방지)
+        BATCH = 200
+        all_data: dict[str, pd.DataFrame] = {}
+        for i in range(0, len(ALL_US_TICKERS), BATCH):
+            batch = ALL_US_TICKERS[i:i + BATCH]
+            try:
+                raw = yf.download(
+                    batch,
+                    period='3mo',
+                    interval='1d',
+                    progress=False,
+                    auto_adjust=True,
+                    group_by='ticker',
+                )
+                for t in batch:
+                    try:
+                        if isinstance(raw.columns, pd.MultiIndex):
+                            df_t = raw[t].dropna(subset=['Close', 'Open'])
+                        else:
+                            df_t = raw.dropna(subset=['Close', 'Open'])
+                        if not df_t.empty:
+                            all_data[t] = df_t
+                    except Exception:
+                        pass
+            except Exception as e:
+                print(f'[US후보] batch {i//BATCH+1} 오류: {e}')
+            time.sleep(1.0)  # rate limit 방지
+
+        print(f'[US후보] 수집 완료: {len(all_data)}개, 장대양봉 필터 중...')
+
+        cutoff_dt = datetime.now() - timedelta(days=days_back)
+        for t, df_t in all_data.items():
+            # 최근 days_back일 내 10%+ 장대양봉 있으면 후보 등록
+            df_recent = df_t[df_t.index >= pd.Timestamp(cutoff_dt)]
+            if df_recent.empty:
+                continue
+            o = df_recent['Open'].values
+            c = df_recent['Close'].values
+            mask = (o > 0) & ((c - o) / o * 100 >= 10.0)
+            if mask.any():
+                candidates[t] = ticker_market.get(t, 'US_SP500')
+
+    except ImportError:
+        print('[US후보] yfinance 미설치 → pip install yfinance')
+    except Exception as e:
+        print(f'[US후보] 오류: {e}')
+
+    # 후보가 너무 적으면 전체 목록 반환 (장기 횡보장 등)
+    if len(candidates) < 20:
+        print(f'[US후보] 후보 부족({len(candidates)}개) → 전체 목록 사용')
+        candidates = dict(get_us_ticker_market())
+
+    with open(US_CACHE_FILE, 'w') as f:
+        json.dump({'timestamp': datetime.now().isoformat(), 'candidates': candidates}, f)
+
+    print(f'[US후보] 최종 후보: {len(candidates)}개')
+    return candidates

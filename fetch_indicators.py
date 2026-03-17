@@ -41,13 +41,17 @@ STATUS_THRESHOLDS = {
     'hy_spread':   lambda v: _status_above(v, [(5.0,'위험'),(4.0,'경고'),(3.5,'관망'),(3.0,'긍정')]),
     'yield_curve': lambda v: _status_below(v, [(-0.5,'위험'),(0,'경고')],
                              default=('최상' if v >= 1.0 else '긍정' if v >= 0.3 else '관망')),
-    'mmf_total':   lambda v: _status_below(v, [(7.5,'위험'),(7.8,'경고'),(8.0,'관망')],
-                             default='긍정' if v < 8.5 else '최상'),
+    # mmf_total: WRMFNS(소매 MMF) 기준 T$ — 실제 범위 $1~2.5T
+    # 낮을수록 현금 소진(과열) → 위험; 높을수록 관망자금 풍부 → 긍정
+    'mmf_total':   lambda v: _status_below(v, [(1.5,'위험'),(1.8,'경고'),(2.1,'관망')],
+                             default='긍정' if v < 2.5 else '최상'),
     'foreign_flow':lambda v: _status_above(v/1e8, [(-5000,'위험'),(-1000,'경고'),(-1,'관망'),(5000,'최상')],
                              default='긍정'),  # v = 억원 단위
     # 새 지표 (높을수록 위험)
     'vix':         lambda v: _status_above(v, [(30,'위험'),(25,'경고'),(20,'관망'),(15,'긍정')]),
-    'gold':        lambda v: _status_above(v, [(2700,'위험'),(2550,'경고'),(2400,'관망'),(2200,'긍정')]),
+    # gold: 2026년 기준 현실적 임계값 ($5000대 시장 반영)
+    # 금이 이미 구조적 고가 → 급등률(MoM%)이 진짜 신호; 절대값은 상한선만 제한
+    'gold':        lambda v: _status_above(v, [(4500,'위험'),(3800,'경고'),(3300,'관망'),(3000,'긍정')]),
     # 새 지표 (낮을수록 위험)
     'btc':         lambda v: _status_below(v, [(55000,'위험'),(70000,'경고'),(85000,'관망')],
                              default='긍정' if v < 95000 else '최상'),

@@ -198,15 +198,21 @@ def api_latest() -> JSONResponse:
 
 
 @app.get("/api/history")
-def api_history(days: int = 30) -> JSONResponse:
-    # FastAPI가 int 타입 강제 → 비정수 자동 거부
-    days = max(1, min(days, 365))  # 1~365일로 클램프
-    return JSONResponse(database.get_history(days))
+def api_history(days: int = 30, market: str = '') -> JSONResponse:
+    days = max(1, min(days, 365))
+    # market 화이트리스트 검증
+    _VALID_MARKETS = {'', 'KOSPI', 'KOSDAQ', 'KR', 'US_NASDAQ', 'US_SP500', 'US'}
+    if market not in _VALID_MARKETS:
+        market = ''
+    return JSONResponse(database.get_history(days, market))
 
 
 @app.get("/api/stocks")
-def api_stocks() -> JSONResponse:
-    return JSONResponse(database.get_stock_tracking())
+def api_stocks(market: str = '') -> JSONResponse:
+    _VALID_MARKETS = {'', 'KOSPI', 'KOSDAQ', 'KR', 'US_NASDAQ', 'US_SP500', 'US'}
+    if market not in _VALID_MARKETS:
+        market = ''
+    return JSONResponse(database.get_stock_tracking(market))
 
 
 @app.get("/api/price/{ticker}")
@@ -409,6 +415,71 @@ def _get_time_slot() -> str:
     return "morning"
 
 
+@app.post("/api/daily-indicators/recalculate")
+async def api_recalculate_crash_scores() -> JSONResponse:
+    """모든 히스토리 crash_score를 현재 가중치+임계값으로 재계산.
+    절대 임계값 지표(gold, mmf_total 등)의 status도 현재 STATUS_THRESHOLDS로 재산정.
+    MoM 기반 지표(kre, xlf, nasdaq 등, STATUS_THRESHOLDS=None)는 저장된 status 유지.
+    """
+    import fetch_indicators as fi
+    import json as _json
+
+    updated = 0
+    errors  = 0
+    try:
+        with database._connect() as conn:
+            rows = conn.execute(
+                "SELECT id, data_json FROM daily_indicators ORDER BY id"
+            ).fetchall()
+
+            for row in rows:
+                try:
+                    data = _json.loads(row["data_json"]) if row["data_json"] else {}
+
+                    # 절대 임계값 지표 → status 재산정
+                    for k, fn in fi.STATUS_THRESHOLDS.items():
+                        if fn is None:
+                            continue  # MoM 기반(kre/xlf/nasdaq/foreign_flow) 유지
+                        ind = data.get(k)
+                        if isinstance(ind, dict) and ind.get("value") is not None:
+                            try:
+                                ind["status"] = fn(float(ind["value"]))
+                            except Exception:
+                                pass
+
+                    new_score = _calc_crash_score(data)
+                    conn.execute(
+                        "UPDATE daily_indicators SET crash_score=?, data_json=? WHERE id=?",
+                        (new_score, _json.dumps(data, ensure_ascii=False), row["id"]),
+                    )
+                    updated += 1
+                except Exception as e:
+                    print(f"[재계산] id={row['id']} 오류: {e}")
+                    errors += 1
+
+        return JSONResponse({"ok": True, "updated": updated, "errors": errors})
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
+
+
+@app.post("/api/scan/us")
+async def api_scan_us() -> JSONResponse:
+    """미국 주식 수동 스캔 (S&P500 + NASDAQ100)"""
+    from data_fetcher import get_us_candidates
+    from scanner import scan_all_us
+    import database as _db
+
+    try:
+        candidates = await asyncio.to_thread(get_us_candidates, 70, True)
+        results    = await asyncio.to_thread(scan_all_us, candidates)
+        if results:
+            await asyncio.to_thread(_db.save_scan, results, len(candidates))
+        return JSONResponse({"ok": True, "candidates": len(candidates),
+                             "hits": len(results), "results": results})
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
+
+
 @app.post("/api/daily-indicators/backfill")
 async def api_backfill_indicators(request: Request) -> JSONResponse:
     """과거 N일치 지표 일괄 수집 후 DB 저장"""
@@ -440,7 +511,7 @@ async def api_backfill_indicators(request: Request) -> JSONResponse:
 
 @app.get("/api/indicators/realtime")
 async def api_realtime_indicators() -> JSONResponse:
-    """Yahoo Finance + F&G + TGA + 외국인수급 즉시 수집 — DB 저장 없음, 부하 최소"""
+    """Yahoo Finance + F&G + TGA 즉시 수집 — 누락 지표는 DB 이전값으로 보완, DB 저장 없음"""
     import fetch_indicators as fi
 
     async def _yahoo(): return await asyncio.to_thread(fi.fetch_yahoo_realtime)
@@ -450,32 +521,36 @@ async def api_realtime_indicators() -> JSONResponse:
         return r
     async def _tga(): return await asyncio.to_thread(fi._fetch_tga)
 
-    # 외국인수급: 평일 → pykrx 라이브, 주말 → DB 최근값
-    is_weekday = datetime.now().weekday() < 5
-    if is_weekday:
-        async def _ff(): return await asyncio.to_thread(fi.fetch_foreign_flow)
-    else:
-        async def _ff(): return {}
-
     try:
-        yahoo_data, fg_data, tga_val, ff_data = await asyncio.gather(
-            _yahoo(), _fg(), _tga(), _ff()
-        )
-        data = yahoo_data
+        yahoo_data, fg_data, tga_val = await asyncio.gather(_yahoo(), _fg(), _tga())
+        data: dict = yahoo_data or {}
         if fg_data:
             data['fear_greed'] = fg_data
         if tga_val is not None:
             data['tga'] = {'value': tga_val, 'status': '관망', 'note': f'TGA {tga_val:.1f}B$'}
-        if ff_data:
-            data['foreign_flow'] = ff_data
-        else:
-            # 주말 또는 pykrx 실패 시 DB 최근값 사용
-            hist = database.get_daily_indicators(5)
+
+        # ── DB 폴백: 라이브 수집이 안 된 지표는 최근 DB 값으로 보완 ──────
+        # FRED 계열(hy_spread/yield_curve/ust2y/rrp/mmf_total) + dxy/ust2y 등은
+        # 실시간 미수집이므로 항상 DB에서 채움
+        db_fill_keys = {'hy_spread', 'yield_curve', 'ust2y', 'rrp', 'mmf_total',
+                        'us10y', 'usd_krw', 'dxy'}
+        missing = {k for k in db_fill_keys if not data.get(k)}
+        # 라이브 수집됐어도 value가 없으면 보완 대상
+        missing |= {k for k, v in data.items() if isinstance(v, dict) and v.get('value') is None}
+
+        if missing:
+            hist = database.get_daily_indicators(7)
             for row in hist:
-                ff_db = row.get('data', {}).get('foreign_flow')
-                if ff_db:
-                    data['foreign_flow'] = ff_db
+                db_data = row.get('data', {}) or {}
+                for k in list(missing):
+                    if db_data.get(k) and db_data[k].get('value') is not None:
+                        entry = dict(db_data[k])
+                        entry['_db_date'] = row.get('date', '')  # 출처 날짜 표시
+                        data[k] = entry
+                        missing.discard(k)
+                if not missing:
                     break
+
         return JSONResponse({"ok": True, "data": data, "ts": datetime.now().isoformat()})
     except Exception as e:
         return JSONResponse({"ok": False, "error": str(e)}, status_code=500)

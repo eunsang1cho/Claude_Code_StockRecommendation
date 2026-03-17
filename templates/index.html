@@ -851,17 +851,25 @@ td { padding: 6px 10px; font-size: 13px; vertical-align: middle; }
         <option value="30" selected>30일</option>
         <option value="90">90일</option>
       </select>
+      <select id="history-market" onchange="loadHistory()" style="min-width:130px">
+        <option value="">🌐 전체 시장</option>
+        <option value="KOSPI">🇰🇷 KOSPI</option>
+        <option value="KOSDAQ">🇰🇷 KOSDAQ</option>
+        <option value="KR">🇰🇷 국내 전체</option>
+        <option value="US_NASDAQ">🇺🇸 NASDAQ100</option>
+        <option value="US_SP500">🇺🇸 S&P500</option>
+      </select>
       <button class="btn" onclick="loadHistory()">↻ 새로고침</button>
     </div>
   </div>
   <div class="table-wrap">
     <table>
       <thead><tr id="history-thead">
-        <th>날짜</th><th>패턴</th><th>종목명</th><th>신뢰도</th>
+        <th>날짜</th><th>시장</th><th>패턴</th><th>종목명</th><th>신뢰도</th>
         <th>현재가</th><th>목표가</th><th>손절가</th><th>매수존</th><th>삭제</th>
       </tr></thead>
       <tbody id="history-body">
-        <tr><td colspan="9" class="loading"><span class="spinner"></span>로딩 중...</td></tr>
+        <tr><td colspan="10" class="loading"><span class="spinner"></span>로딩 중...</td></tr>
       </tbody>
     </table>
   </div>
@@ -872,6 +880,14 @@ td { padding: 6px 10px; font-size: 13px; vertical-align: middle; }
   <div class="panel-header">
     <h2>종목별 추적</h2>
     <div class="controls">
+      <select id="tracking-market" onchange="loadTracking()" style="min-width:130px">
+        <option value="">🌐 전체 시장</option>
+        <option value="KOSPI">🇰🇷 KOSPI</option>
+        <option value="KOSDAQ">🇰🇷 KOSDAQ</option>
+        <option value="KR">🇰🇷 국내 전체</option>
+        <option value="US_NASDAQ">🇺🇸 NASDAQ100</option>
+        <option value="US_SP500">🇺🇸 S&P500</option>
+      </select>
       <button class="btn" id="btn-fetch-prices" onclick="fetchAllPrices()">📡 현재가 불러오기</button>
       <button class="btn" onclick="loadTracking()">↻ 새로고침</button>
       <span id="price-ts-tracking" style="font-size:11px;color:var(--text-muted)"></span>
@@ -1515,31 +1531,69 @@ function renderToday() {
   let sorted = _todayData;
   if (_todaySort.col) sorted = sortData(_todayData, _todaySort.col, _todaySort.dir);
 
-  tbody.innerHTML = sorted.map(r => `<tr>
-    <td>${badge(r.pattern)}</td>
-    <td><strong>${naverLink(r.ticker, r.name)}</strong><br><span style="font-size:11px;color:var(--text-muted)">${escHtml(r.ticker)}</span></td>
-    <td>${confBar(r.conf)}</td>
-    <td style="font-weight:600">${KRW(r.current_price)}</td>
-    <td style="color:var(--yellow)">${KRW(r.target_price)}</td>
-    <td style="color:var(--red)">${KRW(r.stop_loss)}</td>
-    <td>${entryZone(r)}</td>
-    <td>${week52Cell(r.current_price, r.week52_low, r.week52_high)}</td>
-    <td style="font-size:12px;color:var(--text-muted)">${fmtMcap(r.market_cap)}</td>
-    <td><button class="btn-del" onclick="deleteRow(${r.id})">삭제</button></td>
-  </tr>`).join('');
+  tbody.innerHTML = sorted.map(r => {
+    const mkt = r.market || '';
+    const priceCell  = formatStockPrice(r.current_price, mkt);
+    const targetCell = isUSMarket(mkt) ? (r.target_price ? `$${Number(r.target_price).toLocaleString()}` : '—') : KRW(r.target_price);
+    const stopCell   = isUSMarket(mkt) ? (r.stop_loss   ? `$${Number(r.stop_loss).toLocaleString()}`   : '—') : KRW(r.stop_loss);
+    const entryCell  = isUSMarket(mkt)
+      ? (r.entry_low ? `$${Number(r.entry_low).toLocaleString()}~$${Number(r.entry_high).toLocaleString()}` : '—')
+      : entryZone(r);
+    return `<tr>
+      <td>${badge(r.pattern)}</td>
+      <td>
+        ${marketBadge(mkt)}
+        <strong>${stockLinkByMarket(r.ticker, r.name, mkt)}</strong><br>
+        <span style="font-size:11px;color:var(--text-muted)">${escHtml(r.ticker)}</span>
+      </td>
+      <td>${confBar(r.conf)}</td>
+      <td style="font-weight:600">${priceCell}</td>
+      <td style="color:var(--yellow)">${targetCell}</td>
+      <td style="color:var(--red)">${stopCell}</td>
+      <td>${entryCell}</td>
+      <td>${week52Cell(r.current_price, r.week52_low, r.week52_high)}</td>
+      <td style="font-size:12px;color:var(--text-muted)">${fmtMcap(r.market_cap)}</td>
+      <td><button class="btn-del" onclick="deleteRow(${r.id})">삭제</button></td>
+    </tr>`;
+  }).join('');
 }
 
 // ── 탭2: 전체 이력 ───────────────────────────────────────────────────
 
+// ── 시장 배지 헬퍼 ────────────────────────────────────────────────────
+function marketBadge(market) {
+  const map = {
+    'KOSPI':    '<span style="font-size:10px;background:#1e3a5f;color:#7eb8f7;padding:1px 5px;border-radius:3px">🇰🇷KOSPI</span>',
+    'KOSDAQ':   '<span style="font-size:10px;background:#1a3a2a;color:#4ade80;padding:1px 5px;border-radius:3px">🇰🇷KOSDAQ</span>',
+    'KR':       '<span style="font-size:10px;background:#1e3a5f;color:#7eb8f7;padding:1px 5px;border-radius:3px">🇰🇷KR</span>',
+    'US_NASDAQ':'<span style="font-size:10px;background:#2a1a3a;color:#c084fc;padding:1px 5px;border-radius:3px">🇺🇸NASDAQ</span>',
+    'US_SP500': '<span style="font-size:10px;background:#3a1a1a;color:#f87171;padding:1px 5px;border-radius:3px">🇺🇸S&P500</span>',
+    'US':       '<span style="font-size:10px;background:#2a1a3a;color:#c084fc;padding:1px 5px;border-radius:3px">🇺🇸US</span>',
+  };
+  return map[market] || '';
+}
+function isUSMarket(market) { return market && market.startsWith('US'); }
+function formatStockPrice(price, market) {
+  if (isUSMarket(market)) return price ? `$${Number(price).toLocaleString()}` : '—';
+  return KRW(price);
+}
+function stockLinkByMarket(ticker, name, market) {
+  if (isUSMarket(market))
+    return `<a href="https://finance.yahoo.com/quote/${encodeURIComponent(ticker)}" target="_blank">${escHtml(name)}</a>`;
+  return naverLink(ticker, name);
+}
+
 async function loadHistory() {
-  const days = document.getElementById('history-days').value;
-  const tbody = document.getElementById('history-body');
-  tbody.innerHTML = '<tr><td colspan="9" class="loading"><span class="spinner"></span>로딩 중...</td></tr>';
+  const days   = document.getElementById('history-days').value;
+  const market = document.getElementById('history-market')?.value || '';
+  const tbody  = document.getElementById('history-body');
+  tbody.innerHTML = '<tr><td colspan="10" class="loading"><span class="spinner"></span>로딩 중...</td></tr>';
   try {
-    _historyData = await apiFetch(`/api/history?days=${days}`);
+    const url = `/api/history?days=${days}${market ? '&market=' + encodeURIComponent(market) : ''}`;
+    _historyData = await apiFetch(url);
     renderHistory();
   } catch(e) {
-    tbody.innerHTML = `<tr><td colspan="9" class="empty">오류: ${escHtml(e.message)}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="10" class="empty">오류: ${escHtml(e.message)}</td></tr>`;
   }
 }
 
@@ -1549,24 +1603,34 @@ function renderHistory() {
 
   const tbody = document.getElementById('history-body');
   if (!_historyData.length) {
-    tbody.innerHTML = '<tr><td colspan="9" class="empty">이력이 없습니다.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="10" class="empty">이력이 없습니다.</td></tr>';
     return;
   }
 
   let sorted = _historyData;
   if (_historySort.col) sorted = sortData(_historyData, _historySort.col, _historySort.dir);
 
-  tbody.innerHTML = sorted.map(r => `<tr>
-    <td style="font-size:12px;color:var(--text-muted)">${fmtDate(r.scanned_at)}</td>
-    <td>${badge(r.pattern)}</td>
-    <td><strong>${naverLink(r.ticker, r.name)}</strong><br><span style="font-size:11px;color:var(--text-muted)">${escHtml(r.ticker)}</span></td>
-    <td>${confBar(r.conf)}</td>
-    <td style="font-weight:600">${KRW(r.current_price)}</td>
-    <td style="color:var(--yellow)">${KRW(r.target_price)}</td>
-    <td style="color:var(--red)">${KRW(r.stop_loss)}</td>
-    <td>${entryZone(r)}</td>
-    <td><button class="btn-del" onclick="deleteRow(${r.id})">삭제</button></td>
-  </tr>`).join('');
+  tbody.innerHTML = sorted.map(r => {
+    const mkt = r.market || '';
+    const priceCell = formatStockPrice(r.current_price, mkt);
+    const targetCell = isUSMarket(mkt) ? (r.target_price ? `$${Number(r.target_price).toLocaleString()}` : '—') : `<span style="color:var(--yellow)">${KRW(r.target_price)}</span>`;
+    const stopCell   = isUSMarket(mkt) ? (r.stop_loss   ? `$${Number(r.stop_loss).toLocaleString()}`   : '—') : `<span style="color:var(--red)">${KRW(r.stop_loss)}</span>`;
+    const entryCell  = isUSMarket(mkt)
+      ? (r.entry_low ? `$${Number(r.entry_low).toLocaleString()}~$${Number(r.entry_high).toLocaleString()}` : '—')
+      : entryZone(r);
+    return `<tr>
+      <td style="font-size:12px;color:var(--text-muted)">${fmtDate(r.scanned_at)}</td>
+      <td>${marketBadge(mkt)}</td>
+      <td>${badge(r.pattern)}</td>
+      <td><strong>${stockLinkByMarket(r.ticker, r.name, mkt)}</strong><br><span style="font-size:11px;color:var(--text-muted)">${escHtml(r.ticker)}</span></td>
+      <td>${confBar(r.conf)}</td>
+      <td style="font-weight:600">${priceCell}</td>
+      <td>${targetCell}</td>
+      <td>${stopCell}</td>
+      <td>${entryCell}</td>
+      <td><button class="btn-del" onclick="deleteRow(${r.id})">삭제</button></td>
+    </tr>`;
+  }).join('');
 }
 
 // ── 현재가 저장/로드 헬퍼 ────────────────────────────────────────────
@@ -1612,10 +1676,12 @@ function _showPriceTs(elId) {
 // ── 탭3: 종목별 추적 ─────────────────────────────────────────────────
 
 async function loadTracking() {
-  const tbody = document.getElementById('tracking-body');
+  const tbody  = document.getElementById('tracking-body');
+  const market = document.getElementById('tracking-market')?.value || '';
   tbody.innerHTML = '<tr><td colspan="10" class="loading"><span class="spinner"></span>로딩 중...</td></tr>';
   try {
-    _trackingData = await apiFetch('/api/stocks');
+    const url = `/api/stocks${market ? '?market=' + encodeURIComponent(market) : ''}`;
+    _trackingData = await apiFetch(url);
     // 저장된 현재가 적용 (없는 것만)
     for (const [ticker, info] of Object.entries(_savedPrices)) {
       if (!_trackingPrices[ticker]) _trackingPrices[ticker] = info.price;
@@ -1662,12 +1728,18 @@ function renderTracking() {
   }
 
   tbody.innerHTML = sorted.map(r => {
-    const cp = _trackingPrices[r.ticker];
-    const curCell = cp ? KRW(cp) : '<span class="spinner-inline"></span>';
-    const retHtml = cp ? retCell(r.first_price, cp) : '—';
+    const cp  = _trackingPrices[r.ticker];
+    const mkt = r.market || '';
+    const curCell  = cp ? formatStockPrice(cp, mkt) : '<span class="spinner-inline"></span>';
+    const retHtml  = cp ? retCell(r.first_price, cp) : '—';
+    const firstPriceCell = formatStockPrice(r.first_price, mkt);
     return `<tr id="tr-${escHtml(r.ticker)}">
-      <td><strong>${naverLink(r.ticker, r.name)}</strong><br><span style="font-size:11px;color:var(--text-muted)">${escHtml(r.ticker)}</span></td>
-      <td>${KRW(r.first_price)}</td>
+      <td>
+        ${marketBadge(mkt)}
+        <strong>${stockLinkByMarket(r.ticker, r.name, mkt)}</strong><br>
+        <span style="font-size:11px;color:var(--text-muted)">${escHtml(r.ticker)}</span>
+      </td>
+      <td>${firstPriceCell}</td>
       <td id="ret-${escHtml(r.ticker)}">${retHtml}</td>
       <td>${badge(r.last_pattern)}</td>
       <td id="cur-${escHtml(r.ticker)}">${curCell}</td>
@@ -4552,6 +4624,7 @@ async function fetchRealtime() {
     const rtData = json.data;
     const ts = new Date(json.ts).toLocaleTimeString('ko-KR', {hour:'2-digit', minute:'2-digit', second:'2-digit'});
 
+    let dbCount = 0;
     for (const def of IND_DEFS) {
       if (!RT_KEYS.includes(def.key)) continue;
       const item = rtData[def.key];
@@ -4559,9 +4632,18 @@ async function fetchRealtime() {
       const el = document.getElementById(`rt-${def.key}`);
       if (!el) continue;
 
+      const isDb   = !!item._db_date;
       const status = item.status || autoStatus(def, item.value) || '없음';
       const value  = item.value;
       const note   = item.note || '';
+      if (isDb) dbCount++;
+
+      // DB 출처면 날짜 표시 + 점 색상 변경
+      const dotColor = isDb ? '#6b7280' : '';
+      const dotStyle = dotColor ? ` style="background:${dotColor}"` : '';
+      const srcBadge = isDb
+        ? `<span style="font-size:9px;color:#6b7280;margin-left:3px">${item._db_date}</span>` : '';
+
       const valStr = `<div class="ind-value" style="color:${STATUS_COLOR[status]||'var(--text)'}">
         ${Number(value).toLocaleString(undefined, {maximumFractionDigits:2})}
         <span style="font-size:12px;font-weight:400">${def.unit||''}</span>
@@ -4572,15 +4654,16 @@ async function fetchRealtime() {
 
       el.innerHTML = `
         <div class="ind-card-header">
-          <span class="ind-card-name" style="display:flex;align-items:center;gap:4px"><span class="ind-live-dot"></span>${escHtml(def.name)}${rtInfoBtn}</span>
+          <span class="ind-card-name" style="display:flex;align-items:center;gap:4px"><span class="ind-live-dot"${dotStyle}></span>${escHtml(def.name)}${srcBadge}${rtInfoBtn}</span>
           <span class="ind-badge ind-badge-${status}">${status}</span>
         </div>
         ${valStr}
         <div class="ind-note">${escHtml(note)}</div>`;
     }
 
+    const dbNote = dbCount > 0 ? ` · DB보완 ${dbCount}개` : '';
     document.getElementById('rt-last-update').innerHTML =
-      `<span class="ind-live-dot"></span>실시간 ${ts} 업데이트`;
+      `<span class="ind-live-dot"></span>실시간 ${ts} 업데이트${dbNote}`;
   } catch(e) {
     console.warn('[RT] 실시간 수집 오류:', e);
   }

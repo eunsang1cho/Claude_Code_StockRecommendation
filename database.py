@@ -369,6 +369,22 @@ def init_db() -> None:
             CREATE INDEX IF NOT EXISTS idx_ind_date ON daily_indicators(date);
             CREATE INDEX IF NOT EXISTS idx_future_date ON future_indicators(date);
         """)
+    # scan_results 마이그레이션: market 컬럼 추가
+    with _connect() as conn:
+        cols = [r[1] for r in conn.execute("PRAGMA table_info(scan_results)").fetchall()]
+        if 'market' not in cols:
+            conn.execute("ALTER TABLE scan_results ADD COLUMN market TEXT NOT NULL DEFAULT ''")
+            # 기존 한국 종목(숫자로 시작: 일반 6자리 + 우선주 03481K 등) → 'KR', 나머지 → 'US'
+            conn.execute("""
+                UPDATE scan_results
+                SET market = CASE
+                    WHEN ticker GLOB '[0-9]*' THEN 'KR'
+                    ELSE 'US'
+                END
+                WHERE market = ''
+            """)
+            print("✅ scan_results.market 컬럼 마이그레이션 완료")
+
     # daily_indicators 마이그레이션: UNIQUE(date) → UNIQUE(date, time_slot)
     with _connect() as conn:
         cols = [r[1] for r in conn.execute("PRAGMA table_info(daily_indicators)").fetchall()]
@@ -424,12 +440,21 @@ def save_scan(results: list[dict], total_candidates: int) -> None:
 
             market_cap = get_market_cap(r["ticker"])
 
+            # market 결정: result에 명시된 값 우선, 없으면 ticker로 추론
+            mkt = r.get("market", "")
+            if not mkt:
+                t = r["ticker"]
+                mkt = "KR" if t.isdigit() else "US"
+
+            # 한국 종목만 시가총액 조회 (US는 0)
+            mcap = market_cap if mkt.startswith("KR") or mkt in ("KOSPI", "KOSDAQ") else 0
+
             conn.execute(
                 """INSERT INTO scan_results
                    (session_id, scanned_at, ticker, name, pattern, conf,
                     current_price, ma240, entry_low, entry_high,
-                    stop_loss, target_price, market_cap, week52_high, week52_low)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    stop_loss, target_price, market_cap, week52_high, week52_low, market)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     session_id,
                     now,
@@ -443,9 +468,10 @@ def save_scan(results: list[dict], total_candidates: int) -> None:
                     entry_high,
                     r.get("stop", 0),
                     r.get("target", 0),
-                    market_cap,
+                    mcap,
                     r.get("week52_high", 0),
                     r.get("week52_low", 0),
+                    mkt,
                 ),
             )
 
@@ -470,26 +496,37 @@ def get_latest() -> list[dict]:
         return [dict(r) for r in rows]
 
 
-def get_history(days: int = 30) -> list[dict]:
-    """최근 N일 전체 스캔 결과 (최신순)"""
+def get_history(days: int = 30, market: str = '') -> list[dict]:
+    """최근 N일 전체 스캔 결과 (최신순). market='' 이면 전체."""
     since = (datetime.now() - timedelta(days=days)).isoformat(timespec="seconds")
     with _connect() as conn:
-        rows = conn.execute(
-            """SELECT * FROM scan_results
-               WHERE scanned_at >= ?
-               ORDER BY scanned_at DESC, conf DESC""",
-            (since,),
-        ).fetchall()
+        if market:
+            rows = conn.execute(
+                """SELECT * FROM scan_results
+                   WHERE scanned_at >= ? AND market = ?
+                   ORDER BY scanned_at DESC, conf DESC""",
+                (since, market),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """SELECT * FROM scan_results
+                   WHERE scanned_at >= ?
+                   ORDER BY scanned_at DESC, conf DESC""",
+                (since,),
+            ).fetchall()
         return [dict(r) for r in rows]
 
 
-def get_stock_tracking() -> list[dict]:
-    """종목별 감지 횟수 + 최초 감지가 + 최근 신뢰도/패턴 (감지 횟수 내림차순)"""
+def get_stock_tracking(market: str = '') -> list[dict]:
+    """종목별 감지 횟수 + 최초 감지가 + 최근 신뢰도/패턴. market='' 이면 전체."""
     with _connect() as conn:
+        market_cond = "WHERE market = ?" if market else ""
+        params = (market,) if market else ()
         rows = conn.execute(
-            """SELECT
+            f"""SELECT
                    sr.ticker,
                    sr.name,
+                   sr.market,
                    COUNT(*)                AS total_hits,
                    MIN(sr.scanned_at)      AS first_detected,
                    MAX(sr.scanned_at)      AS last_detected,
@@ -503,8 +540,10 @@ def get_stock_tracking() -> list[dict]:
                     WHERE ticker = sr.ticker
                     ORDER BY scanned_at ASC LIMIT 1)  AS first_price
                FROM scan_results sr
+               {market_cond}
                GROUP BY sr.ticker
                ORDER BY total_hits DESC, last_detected DESC""",
+            params,
         ).fetchall()
         return [dict(r) for r in rows]
 

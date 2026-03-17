@@ -59,8 +59,8 @@ def _model_prefix() -> str:
 # AI-stockAlarm 디렉토리를 Python 경로에 추가
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from data_fetcher import get_candidates_cached, get_stock_name
-from scanner import scan_all, scan_all_plus, format_result
+from data_fetcher import get_candidates_cached, get_stock_name, get_us_candidates
+from scanner import scan_all, scan_all_plus, scan_all_us, format_result
 from watchlist import update_from_scan, add_stock, remove_stock, get_all
 from sector_info import enrich_results
 import database
@@ -166,6 +166,54 @@ async def do_scan(app: Application, is_manual: bool = False) -> None:
         await msg.edit_text(f"❌ 스캔 오류: {e}")
 
 
+async def do_scan_us(app: Application, is_manual: bool = False) -> None:
+    """🇺🇸 미국 주식 패턴 스캔 (S&P500 + NASDAQ100)"""
+    prefix = "🔍 수동" if is_manual else "🤖 자동"
+    msg = await app.bot.send_message(
+        chat_id=USER_ID,
+        text=f"{prefix} 🇺🇸 미국 스캔 시작\\!\n⏳ 후보 종목 수집 중\\.\\.\\.\n\\(첫 실행 시 약 5\\~10분 소요\\)",
+        parse_mode="MarkdownV2",
+    )
+    try:
+        candidates: dict[str, str] = await asyncio.to_thread(
+            get_us_candidates, 70, is_manual
+        )
+        await msg.edit_text(
+            f"{prefix} 🇺🇸 미국 스캔 중\\.\\.\\.\n"
+            f"📋 후보: {len(candidates)}개 종목\n"
+            f"⏳ 패턴 탐지 중\\.\\.\\.",
+            parse_mode="MarkdownV2",
+        )
+        results: list[dict] = await asyncio.to_thread(scan_all_us, candidates)
+
+        if results:
+            await asyncio.to_thread(database.save_scan, results, len(candidates))
+
+        if not results:
+            await msg.edit_text(f"✅ 🇺🇸 미국 스캔 완료 ({len(candidates)}개)\n📭 감지된 패턴 없음")
+            return
+
+        await msg.edit_text(
+            f"✅ 🇺🇸 미국 스캔 완료\\!\n"
+            f"📊 {len(candidates)}개 중 {len(results)}개 패턴 감지",
+            parse_mode="MarkdownV2",
+        )
+        for r in results:
+            try:
+                mkt_tag = "🇺🇸NASDAQ" if r.get("market") == "US_NASDAQ" else "🇺🇸S&P500"
+                plain = (
+                    f"[{mkt_tag}] {r['pattern']} 감지: {r['name']} ({r['ticker']})\n"
+                    f"현재가: ${r['current']:,} / 신뢰도: {r['conf']}%\n"
+                    f"목표가: ${r.get('target',0):,} / 손절가: ${r.get('stop',0):,}"
+                )
+                await app.bot.send_message(chat_id=USER_ID, text=plain)
+                await asyncio.sleep(0.5)
+            except Exception:
+                pass
+    except Exception as e:
+        await msg.edit_text(f"❌ 🇺🇸 미국 스캔 오류: {e}")
+
+
 # ── 텔레그램 핸들러 ───────────────────────────────────────────────────
 
 @authorized
@@ -187,6 +235,11 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 @authorized
 async def cmd_scan(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await do_scan(context.application, is_manual=True)
+
+
+@authorized
+async def cmd_scan_us(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await do_scan_us(context.application, is_manual=True)
 
 
 @authorized
@@ -392,6 +445,9 @@ async def cmd_ls(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 @authorized
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     text = update.message.text or ""
+    if "미국 스캔" in text or "us scan" in text.lower() or "us스캔" in text:
+        await do_scan_us(context.application, is_manual=True)
+        return
     if "스캔" in text or "scan" in text.lower():
         await do_scan(context.application, is_manual=True)
         return
@@ -417,6 +473,10 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
 async def _scheduled_scan(app: Application) -> None:
     await do_scan(app, is_manual=False)
+
+
+async def _scheduled_scan_us(app: Application) -> None:
+    await do_scan_us(app, is_manual=False)
 
 
 async def _scheduled_indicators(app: Application, time_slot: str = "morning") -> None:
@@ -767,13 +827,23 @@ async def post_init(app: Application) -> None:
 
     scheduler = AsyncIOScheduler(timezone="Asia/Seoul")
 
-    # ① 장 마감 후 스캔: 평일 15:40
+    # ① 한국 장 마감 후 스캔: 평일 15:40 KST
     scheduler.add_job(
         _scheduled_scan,
         "cron",
         day_of_week="mon-fri",
         hour=15,
         minute=40,
+        args=[app],
+    )
+
+    # ② 🇺🇸 미국 장 마감 후 스캔: 평일 07:00 KST (미국 전일 16:00 EST 마감 후)
+    scheduler.add_job(
+        _scheduled_scan_us,
+        "cron",
+        day_of_week="tue-sat",  # 미국 월~금 마감 = 한국 화~토 새벽/아침
+        hour=7,
+        minute=0,
         args=[app],
     )
 
@@ -900,6 +970,7 @@ def main() -> None:
     app.add_error_handler(error_handler)
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("scan", cmd_scan))
+    app.add_handler(CommandHandler("scan_us", cmd_scan_us))
     app.add_handler(CommandHandler("watchlist", cmd_watchlist))
     app.add_handler(CommandHandler("add", cmd_add))
     app.add_handler(CommandHandler("remove", cmd_remove))

@@ -12,7 +12,7 @@ import time
 
 import pandas as pd
 
-from data_fetcher import get_ohlcv, get_stock_name
+from data_fetcher import get_ohlcv, get_ohlcv_us, get_stock_name
 
 # MA240을 위해 최소 250 거래일 (≈ 390 달력일) 필요
 _OHLCV_DAYS = 390
@@ -776,6 +776,97 @@ def detect_ten_bagger(df: pd.DataFrame, ticker: str, cfg: dict) -> dict | None:
 
 
 # ── 전체 스캔 ─────────────────────────────────────────────────────────
+
+def _base_ok_us(df: pd.DataFrame, price: float, ma240: float) -> bool:
+    """미국 주식용 기본 조건 (가격 $5+, MA240 위, MA240 우상향)"""
+    if price < 5.0:           # $5 미만 페니스탁 제외
+        return False
+    if pd.isna(ma240) or ma240 == 0:
+        return False
+    if price <= ma240:
+        return False
+    if len(df) < 260:
+        return False
+    ma240_20d = df["MA240"].iloc[-20]
+    if pd.isna(ma240_20d) or ma240 <= ma240_20d:
+        return False
+    return True
+
+
+def scan_all_us(ticker_market: dict[str, str]) -> list[dict]:
+    """
+    미국 주식 패턴 스캔. 기존 알고리즘 재사용, MA240 우상향 조건 적용.
+    ticker_market: {ticker: market}  예) {'NVDA': 'US_NASDAQ'}
+    """
+    from database import get_algo_config
+    cfg_early       = get_algo_config("골삼이(상승초입)")
+    cfg_golsami     = get_algo_config("골삼이")
+    cfg_golden      = get_algo_config("골든샘플")
+    cfg_red         = get_algo_config("레드삼각")
+    cfg_ma_compress = get_algo_config("MA압축지지")
+    cfg_ten_bagger  = get_algo_config("텐배거")
+
+    results: list[dict] = []
+
+    for ticker, market in ticker_market.items():
+        try:
+            df = get_ohlcv_us(ticker, days=_OHLCV_DAYS)
+            if df is None or len(df) < 30:
+                continue
+
+            df_ind = _indicators(df)
+            cur    = df_ind.iloc[-1]
+            price  = float(cur["Close"])
+            ma240  = float(cur["MA240"]) if not pd.isna(cur["MA240"]) else 0.0
+
+            # 미국 주식 기본 조건 패스 여부 사전 확인 (시간 절약)
+            if not _base_ok_us(df_ind, price, ma240):
+                continue
+
+            # 기존 패턴 함수는 내부에서 _base_ok (1000원 기준) 호출하므로
+            # US 전용 래퍼: price < 1000 체크를 임시로 우회하기 위해 Close 스케일 조정 불필요
+            # → 대신 각 패턴 함수의 price < 1000 조건만 US에선 무시
+            # 실용적 접근: Close를 ×1000 하면 _base_ok 통과 (패턴 계산은 비율 기반이라 동일)
+            df_scaled = df.copy()
+            df_scaled["Open"]  = df_scaled["Open"]  * 1000
+            df_scaled["High"]  = df_scaled["High"]  * 1000
+            df_scaled["Low"]   = df_scaled["Low"]   * 1000
+            df_scaled["Close"] = df_scaled["Close"] * 1000
+
+            result = (
+                detect_golsami_early(df_scaled, ticker, cfg_early) or
+                detect_golsami(df_scaled, ticker, cfg_golsami) or
+                detect_golden_sample(df_scaled, ticker, cfg_golden) or
+                detect_red_triangle(df_scaled, ticker, cfg_red) or
+                detect_ma_compression(df_scaled, ticker, cfg_ma_compress) or
+                detect_ten_bagger(df_scaled, ticker, cfg_ten_bagger)
+            )
+
+            if result:
+                # 스케일 복원: 저장 단위를 달러 정수로
+                for key in ('current', 'ma20', 'ma60', 'ma240',
+                            'bc_open', 'bc_low', 'bc_high',
+                            'entry', 'stop', 'target',
+                            'week52_high', 'week52_low', 'box_top'):
+                    if key == 'entry' and isinstance(result.get(key), tuple):
+                        result[key] = (
+                            round(result[key][0] / 1000),
+                            round(result[key][1] / 1000),
+                        )
+                    elif key in result and isinstance(result[key], (int, float)):
+                        result[key] = round(result[key] / 1000)
+
+                result['name']   = ticker           # US는 ticker가 곧 이름
+                result['ticker'] = ticker
+                result['market'] = market
+                results.append(result)
+
+            time.sleep(0.15)
+        except Exception:
+            continue
+
+    return results
+
 
 def scan_all(tickers: list[str]) -> list[dict]:
     """
