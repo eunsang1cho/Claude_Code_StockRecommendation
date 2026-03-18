@@ -570,7 +570,19 @@ td { padding: 6px 10px; font-size: 13px; vertical-align: middle; }
 
   <div class="panel-header">
     <h2>오늘 스캔 결과</h2>
-    <button class="btn" onclick="loadLatest()">↻ 새로고침</button>
+    <div style="display:flex;align-items:center;gap:6px">
+      <select id="today-market" onchange="renderToday()" style="font-size:12px;padding:4px 6px;background:var(--surface2);color:var(--text-primary);border:1px solid var(--border);border-radius:4px">
+        <option value="">전체</option>
+        <option value="KR">🇰🇷 국내 전체</option>
+        <option value="KOSPI">🇰🇷 KOSPI</option>
+        <option value="KOSDAQ">🇰🇷 KOSDAQ</option>
+        <option value="US">🇺🇸 미국 전체</option>
+        <option value="US_RUSSELL">🇺🇸 Russell2000</option>
+        <option value="US_NASDAQ">🇺🇸 NASDAQ100</option>
+        <option value="US_SP500">🇺🇸 S&amp;P500</option>
+      </select>
+      <button class="btn" onclick="loadLatest()">↻ 새로고침</button>
+    </div>
   </div>
   <div class="stat-row" id="stats-row"></div>
   <div class="table-wrap">
@@ -1518,14 +1530,23 @@ async function loadLatest() {
 }
 
 function renderToday() {
+  const mktFilter = (document.getElementById('today-market')?.value || '').trim();
+  const filtered = _todayData.filter(r => {
+    if (!mktFilter) return true;
+    const m = r.market || '';
+    if (mktFilter === 'KR') return m === 'KOSPI' || m === 'KOSDAQ' || m === 'KR';
+    if (mktFilter === 'US') return m.startsWith('US');
+    return m === mktFilter;
+  });
+
   // 통계 카드 갱신
   document.getElementById('stats-row').innerHTML = `
-    <div class="stat-card"><div class="stat-label">전체 감지</div><div class="stat-value">${_todayData.length}</div></div>
-    <div class="stat-card"><div class="stat-label">🚀 상승초입</div><div class="stat-value">${_todayData.filter(r=>r.pattern==='골삼이(상승초입)').length}</div></div>
-    <div class="stat-card"><div class="stat-label">📦 MA압축지지</div><div class="stat-value">${_todayData.filter(r=>r.pattern==='MA압축지지').length}</div></div>
-    <div class="stat-card"><div class="stat-label">📊 골삼이</div><div class="stat-value">${_todayData.filter(r=>r.pattern==='골삼이').length}</div></div>
-    <div class="stat-card"><div class="stat-label">🔑 골든샘플</div><div class="stat-value">${_todayData.filter(r=>r.pattern==='골든샘플').length}</div></div>
-    <div class="stat-card"><div class="stat-label">📐 레드삼각</div><div class="stat-value">${_todayData.filter(r=>r.pattern==='레드삼각').length}</div></div>
+    <div class="stat-card"><div class="stat-label">전체 감지</div><div class="stat-value">${filtered.length}</div></div>
+    <div class="stat-card"><div class="stat-label">🚀 상승초입</div><div class="stat-value">${filtered.filter(r=>r.pattern==='골삼이(상승초입)').length}</div></div>
+    <div class="stat-card"><div class="stat-label">📦 MA압축지지</div><div class="stat-value">${filtered.filter(r=>r.pattern==='MA압축지지').length}</div></div>
+    <div class="stat-card"><div class="stat-label">📊 골삼이</div><div class="stat-value">${filtered.filter(r=>r.pattern==='골삼이').length}</div></div>
+    <div class="stat-card"><div class="stat-label">🔑 골든샘플</div><div class="stat-value">${filtered.filter(r=>r.pattern==='골든샘플').length}</div></div>
+    <div class="stat-card"><div class="stat-label">📐 레드삼각</div><div class="stat-value">${filtered.filter(r=>r.pattern==='레드삼각').length}</div></div>
   `;
 
   // 헤더 갱신 (정렬 아이콘 포함)
@@ -1533,13 +1554,13 @@ function renderToday() {
   if (thead) thead.innerHTML = buildTodayThead();
 
   const tbody = document.getElementById('today-body');
-  if (!_todayData.length) {
+  if (!filtered.length) {
     tbody.innerHTML = '<tr><td colspan="10" class="empty">감지된 패턴이 없습니다.</td></tr>';
     return;
   }
 
-  let sorted = _todayData;
-  if (_todaySort.col) sorted = sortData(_todayData, _todaySort.col, _todaySort.dir);
+  let sorted = filtered;
+  if (_todaySort.col) sorted = sortData(filtered, _todaySort.col, _todaySort.dir);
 
   tbody.innerHTML = sorted.map(r => {
     const mkt = r.market || '';
@@ -1588,9 +1609,12 @@ function formatStockPrice(price, market) {
   if (isUSMarket(market)) return price ? `$${Number(price).toLocaleString()}` : '—';
   return KRW(price);
 }
+function openYahoo(ticker) {
+  window.open('https://finance.yahoo.com/quote/' + encodeURIComponent(ticker), '_blank');
+}
 function stockLinkByMarket(ticker, name, market) {
   if (isUSMarket(market))
-    return `<a href="https://finance.yahoo.com/quote/${encodeURIComponent(ticker)}" target="_blank">${escHtml(name)}</a>`;
+    return `<span class="stock-link" onclick="openYahoo('${escHtml(ticker)}')" title="Yahoo Finance 보기">${escHtml(name)}</span>`;
   return naverLink(ticker, name);
 }
 
