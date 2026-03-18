@@ -795,7 +795,8 @@ def _base_ok_us(df: pd.DataFrame, price: float, ma240: float) -> bool:
 
 def scan_all_us(ticker_market: dict[str, str],
                 us_big_pct: float = 0.10,
-                us_vol_mult: float = 5.0) -> list[dict]:
+                us_vol_mult: float = 5.0,
+                ticker_names: dict[str, str] | None = None) -> list[dict]:
     """
     미국 주식 패턴 스캔. 기존 알고리즘 재사용, MA240 우상향 조건 적용.
     ticker_market: {ticker: market}  예) {'NVDA': 'US_NASDAQ'}
@@ -865,7 +866,7 @@ def scan_all_us(ticker_market: dict[str, str],
                     elif key in result and isinstance(result[key], (int, float)):
                         result[key] = round(result[key] / 1000)
 
-                result['name']   = ticker           # US는 ticker가 곧 이름
+                result['name']   = (ticker_names or {}).get(ticker, ticker)
                 result['ticker'] = ticker
                 result['market'] = market
                 results.append(result)

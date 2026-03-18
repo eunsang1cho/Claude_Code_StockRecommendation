@@ -60,7 +60,7 @@ def _model_prefix() -> str:
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from data_fetcher import get_candidates_cached, get_stock_name, get_us_candidates
-from us_tickers import get_russell2000_tickers
+from us_tickers import get_russell2000_tickers, get_russell2000_names
 from scanner import scan_all, scan_all_plus, scan_all_us, format_result
 from watchlist import update_from_scan, add_stock, remove_stock, get_all
 from sector_info import enrich_results
@@ -177,6 +177,7 @@ async def do_scan_us(app: Application, is_manual: bool = False) -> None:
     )
     try:
         candidates: dict[str, str] = await asyncio.to_thread(get_russell2000_tickers)
+        names: dict[str, str]      = await asyncio.to_thread(get_russell2000_names)
         if not candidates:
             await msg.edit_text("❌ Russell 2000 티커 수집 실패")
             return
@@ -188,7 +189,7 @@ async def do_scan_us(app: Application, is_manual: bool = False) -> None:
         )
         # US 완화 기준: 대양봉 10%, 거래량 5배
         results: list[dict] = await asyncio.to_thread(
-            scan_all_us, candidates, 0.10, 5.0
+            scan_all_us, candidates, 0.10, 5.0, names
         )
 
         if results:
@@ -775,6 +776,26 @@ async def _scheduled_month_backfill(app: Application) -> None:
         print(f"⚠️  월말 백필 오류: {e}")
 
 
+async def _scheduled_daily_backfill(app: Application) -> None:
+    """일일 역사 뉴스 백필 — 매일 05:05 (20주씩 자동 누적)"""
+    import news_backfill as nb
+    print("📚 일일 역사 백필 시작...")
+    try:
+        result = await asyncio.to_thread(nb.run_backfill, '2020-01', 20, CLAUDE_KEY)
+        print(
+            f"📚 일일 백필 완료: {result['processed_weeks']}주 / "
+            f"{result['total_articles']}건 / 남은 {result['remaining_weeks']}주"
+        )
+        if result['remaining_weeks'] == 0:
+            await app.bot.send_message(
+                chat_id=USER_ID,
+                text="📚 *뉴스 역사 백필 완전 완료*\n2020년부터 현재까지 모든 주 수집됨.",
+                parse_mode="Markdown",
+            )
+    except Exception as e:
+        print(f"⚠️  일일 백필 오류: {e}")
+
+
 async def _scheduled_crawl(app: Application) -> None:
     """장 마감 후 당일 OHLCV + 지표 수집 (16:00)"""
     from datetime import datetime as _dt
@@ -892,6 +913,15 @@ async def post_init(app: Application) -> None:
         day="last",
         hour=23,
         minute=0,
+        args=[app],
+    )
+
+    # ⑫ 일일 역사 뉴스 백필: 매일 05:05 (20주씩 누적)
+    scheduler.add_job(
+        _scheduled_daily_backfill,
+        "cron",
+        hour=5,
+        minute=5,
         args=[app],
     )
 

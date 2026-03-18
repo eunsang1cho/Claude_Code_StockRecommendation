@@ -95,10 +95,21 @@ def get_us_ticker_market() -> dict[str, str]:
 
 def get_russell2000_tickers() -> dict[str, str]:
     """
-    iShares IWM ETF 홀딩스에서 Russell 2000 티커 실시간 수집.
+    iShares IWM ETF 홀딩스에서 Russell 2000 티커 + 종목명 실시간 수집.
     반환: {ticker: 'US_RUSSELL'}
-    실패 시 빈 dict 반환.
     """
+    markets, _ = _fetch_russell2000_data()
+    return markets
+
+
+def get_russell2000_names() -> dict[str, str]:
+    """Russell 2000 티커 → 회사명 dict"""
+    _, names = _fetch_russell2000_data()
+    return names
+
+
+def _fetch_russell2000_data() -> tuple[dict[str, str], dict[str, str]]:
+    """iShares IWM CSV에서 {ticker: market}, {ticker: name} 동시 수집"""
     import urllib.request, csv as _csv
     url = (
         "https://www.ishares.com/us/products/239710/ishares-russell-2000-etf"
@@ -113,17 +124,20 @@ def get_russell2000_tickers() -> dict[str, str]:
             (i for i, l in enumerate(lines) if 'Ticker' in l and 'Name' in l), None
         )
         if header_idx is None:
-            return {}
-        result: dict[str, str] = {}
+            return {}, {}
+        markets: dict[str, str] = {}
+        names: dict[str, str] = {}
         reader = _csv.DictReader(lines[header_idx:])
         for row in reader:
             t = row.get('Ticker', '').strip()
             if t and t != '-' and t != 'USD' and '.' not in t:
-                result[t] = 'US_RUSSELL'
-        return result
+                markets[t] = 'US_RUSSELL'
+                n = row.get('Name', '').strip()
+                names[t] = n if n else t
+        return markets, names
     except Exception as e:
         print(f'[Russell2000] 티커 수집 실패: {e}')
-        return {}
+        return {}, {}
 
 
 # 전체 티커 목록 (중복 제거, 순서 유지)

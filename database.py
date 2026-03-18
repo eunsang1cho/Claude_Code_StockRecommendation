@@ -479,28 +479,69 @@ def save_scan(results: list[dict], total_candidates: int) -> None:
 
 
 def get_latest() -> list[dict]:
-    """가장 최근 세션 결과 (신뢰도 내림차순)"""
+    """오늘 날짜의 모든 세션 결과 통합 (KR + US 분리 유지, 신뢰도 내림차순)
+    오늘 결과가 없으면 마지막 세션 반환.
+    """
+    today = datetime.now().strftime('%Y-%m-%d')
     with _connect() as conn:
-        row = conn.execute(
-            "SELECT id FROM scan_sessions ORDER BY id DESC LIMIT 1"
-        ).fetchone()
-        if not row:
-            return []
-
-        rows = conn.execute(
-            """SELECT * FROM scan_results
-               WHERE session_id = ?
-               ORDER BY conf DESC""",
-            (row["id"],),
+        # 오늘 세션 ID 목록
+        session_rows = conn.execute(
+            "SELECT id FROM scan_sessions WHERE scanned_at >= ? ORDER BY id",
+            (today + 'T00:00:00',),
         ).fetchall()
-        return [dict(r) for r in rows]
+
+        if not session_rows:
+            # 오늘 세션 없으면 마지막 세션
+            last = conn.execute(
+                "SELECT id FROM scan_sessions ORDER BY id DESC LIMIT 1"
+            ).fetchone()
+            if not last:
+                return []
+            session_ids = [last["id"]]
+        else:
+            session_ids = [r["id"] for r in session_rows]
+
+        placeholders = ','.join('?' * len(session_ids))
+        rows = conn.execute(
+            f"""SELECT * FROM scan_results
+                WHERE session_id IN ({placeholders})
+                ORDER BY conf DESC""",
+            session_ids,
+        ).fetchall()
+
+        # 동일 ticker 중복 제거 (같은 종목이 여러 세션에서 탐지된 경우 최고 신뢰도만)
+        seen: set[str] = set()
+        result = []
+        for r in rows:
+            key = r["ticker"]
+            if key not in seen:
+                seen.add(key)
+                result.append(dict(r))
+        return result
 
 
 def get_history(days: int = 30, market: str = '') -> list[dict]:
-    """최근 N일 전체 스캔 결과 (최신순). market='' 이면 전체."""
+    """최근 N일 전체 스캔 결과 (최신순). market='' 이면 전체.
+    market='US' 이면 US_NASDAQ/US_SP500/US_RUSSELL/US 모두 포함.
+    market='KR' 이면 KOSPI/KOSDAQ/KR 모두 포함.
+    """
     since = (datetime.now() - timedelta(days=days)).isoformat(timespec="seconds")
     with _connect() as conn:
-        if market:
+        if market == 'US':
+            rows = conn.execute(
+                """SELECT * FROM scan_results
+                   WHERE scanned_at >= ? AND market LIKE 'US%'
+                   ORDER BY scanned_at DESC, conf DESC""",
+                (since,),
+            ).fetchall()
+        elif market == 'KR':
+            rows = conn.execute(
+                """SELECT * FROM scan_results
+                   WHERE scanned_at >= ? AND market IN ('KOSPI','KOSDAQ','KR')
+                   ORDER BY scanned_at DESC, conf DESC""",
+                (since,),
+            ).fetchall()
+        elif market:
             rows = conn.execute(
                 """SELECT * FROM scan_results
                    WHERE scanned_at >= ? AND market = ?
@@ -518,10 +559,22 @@ def get_history(days: int = 30, market: str = '') -> list[dict]:
 
 
 def get_stock_tracking(market: str = '') -> list[dict]:
-    """종목별 감지 횟수 + 최초 감지가 + 최근 신뢰도/패턴. market='' 이면 전체."""
+    """종목별 감지 횟수 + 최초 감지가 + 최근 신뢰도/패턴. market='' 이면 전체.
+    market='US' → US_* 전체. market='KR' → KOSPI/KOSDAQ/KR 전체.
+    """
     with _connect() as conn:
-        market_cond = "WHERE market = ?" if market else ""
-        params = (market,) if market else ()
+        if market == 'US':
+            market_cond = "WHERE market LIKE 'US%'"
+            params: tuple = ()
+        elif market == 'KR':
+            market_cond = "WHERE market IN ('KOSPI','KOSDAQ','KR')"
+            params = ()
+        elif market:
+            market_cond = "WHERE market = ?"
+            params = (market,)
+        else:
+            market_cond = ""
+            params = ()
         rows = conn.execute(
             f"""SELECT
                    sr.ticker,
