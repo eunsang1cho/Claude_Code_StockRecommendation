@@ -1529,6 +1529,20 @@ async def api_calendar(year: int = 0, refresh: bool = False) -> JSONResponse:
     return JSONResponse({"ok": True, "events": events, "year": target_year})
 
 
+@app.get("/api/calendar/analyses")
+async def api_calendar_analyses(days: int = 60) -> JSONResponse:
+    """캘린더 이벤트 분석 결과 목록 반환."""
+    rows = database.get_calendar_analyses(days=days)
+    return JSONResponse({"ok": True, "analyses": rows})
+
+
+@app.get("/api/calendar/recent-alerts")
+async def api_calendar_recent_alerts(hours: int = 24) -> JSONResponse:
+    """최근 N시간 내 분석된 이벤트 반환 (대시보드 알림용)."""
+    rows = database.get_recent_calendar_alerts(hours=hours)
+    return JSONResponse({"ok": True, "alerts": rows})
+
+
 @app.get("/api/lotto/recent")
 async def api_lotto_recent(limit: int = 20) -> JSONResponse:
     import lotto

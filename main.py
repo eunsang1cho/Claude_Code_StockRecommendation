@@ -70,6 +70,7 @@ from web_server import app as web_app
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 USER_ID = int(os.getenv("TELEGRAM_USER_ID", "0"))
 CLAUDE_KEY = os.getenv("CLAUDE_API_KEY")
+FRED_KEY = os.getenv("FRED_API_KEY", "")
 NGROK_TOKEN = os.getenv("NGROK_AUTH_TOKEN", "")
 
 claude_client = anthropic.Anthropic(api_key=CLAUDE_KEY)
@@ -796,6 +797,34 @@ async def _scheduled_daily_backfill(app: Application) -> None:
         print(f"⚠️  일일 백필 오류: {e}")
 
 
+async def _scheduled_calendar_analysis(app: Application) -> None:
+    """경제 캘린더 결과 분석 — 3시간마다 (actual 값이 생긴 이벤트 자동 분석)"""
+    import calendar_result_fetcher as _crf
+    print("📅 캘린더 결과 분석 체크...")
+    try:
+        analyzed = await asyncio.to_thread(
+            _crf.check_and_analyze_recent_events,
+            CLAUDE_KEY, FRED_KEY, 2,
+        )
+        for ev in analyzed:
+            title    = ev.get('title', '')
+            actual   = ev.get('actual', '')
+            forecast = ev.get('forecast', '')
+            analysis = ev.get('analysis', '')
+            msg = (
+                f"📅 *캘린더 업데이트: {title}*\n"
+                f"예상: {forecast or '—'}  →  실제: *{actual}*\n\n"
+                f"{analysis}"
+            )
+            await app.bot.send_message(
+                chat_id=USER_ID,
+                text=msg[:4000],
+                parse_mode="Markdown",
+            )
+    except Exception as e:
+        print(f"⚠️  캘린더 분석 오류: {e}")
+
+
 async def _scheduled_crawl(app: Application) -> None:
     """장 마감 후 당일 OHLCV + 지표 수집 (16:00)"""
     from datetime import datetime as _dt
@@ -922,6 +951,15 @@ async def post_init(app: Application) -> None:
         "cron",
         hour=5,
         minute=5,
+        args=[app],
+    )
+
+    # ⑬ 경제 캘린더 분석: 3시간마다 (00/03/06/09/12/15/18/21시 30분)
+    scheduler.add_job(
+        _scheduled_calendar_analysis,
+        "cron",
+        hour='0,3,6,9,12,15,18,21',
+        minute=30,
         args=[app],
     )
 

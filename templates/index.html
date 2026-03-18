@@ -421,6 +421,7 @@ td { padding: 6px 10px; font-size: 13px; vertical-align: middle; }
   </div>
   <button id="theme-toggle" onclick="toggleTheme()" title="다크/라이트 모드 전환">🌙</button>
 </header>
+<div id="cal-alert-strip" style="display:none;background:linear-gradient(90deg,#1a2a3a,#1e3050);border-bottom:1px solid #2a4a7a;padding:6px 16px;font-size:12px;overflow-x:auto;white-space:nowrap"></div>
 
 <div class="tabs">
   <button class="tab-btn active" onclick="switchTab('today')">오늘 스캔</button>
@@ -1338,10 +1339,11 @@ function toggleTheme() {
   document.getElementById('theme-toggle').textContent = next === 'light' ? '☀️' : '🌙';
 }
 
-// 페이지 로드 시 버튼 아이콘 동기화
+// 페이지 로드 시 버튼 아이콘 동기화 + 캘린더 알림 스트립
 document.addEventListener('DOMContentLoaded', () => {
   const t = localStorage.getItem('theme') || 'dark';
   document.getElementById('theme-toggle').textContent = t === 'light' ? '☀️' : '🌙';
+  loadCalAlertStrip();
 });
 
 // ── 유틸 ─────────────────────────────────────────────────────────────
@@ -5741,7 +5743,7 @@ async function initCalendarTab(forceRefresh = false) {
   const now = new Date();
   _calYear = now.getFullYear();
   _calMonth = now.getMonth() + 1;
-  await _calLoadData(forceRefresh);
+  await Promise.all([_calLoadData(forceRefresh), _loadCalAnalyses()]);
   _calRender();
 }
 
@@ -5888,6 +5890,38 @@ function _calRenderGrid(dayEvMap) {
   gridEl.innerHTML = html;
 }
 
+let _calAnalyses = {};  // {event_key|event_date: analysis_text}
+
+async function _loadCalAnalyses() {
+  try {
+    const r = await fetch('/api/calendar/analyses?days=90');
+    const d = await r.json();
+    _calAnalyses = {};
+    for (const a of (d.analyses || [])) {
+      _calAnalyses[`${a.event_key}|${a.event_date}`] = a;
+    }
+  } catch(e) {}
+}
+
+async function loadCalAlertStrip() {
+  try {
+    const r = await fetch('/api/calendar/recent-alerts?hours=24');
+    const d = await r.json();
+    const alerts = d.alerts || [];
+    const strip = document.getElementById('cal-alert-strip');
+    if (!strip) return;
+    if (!alerts.length) { strip.style.display = 'none'; return; }
+    strip.style.display = 'block';
+    strip.innerHTML = alerts.map(a =>
+      `<span style="margin-right:16px;cursor:pointer" onclick="switchTab('calendar')" title="${escHtml(a.analysis.slice(0,120))}">
+        📅 <b style="color:#7eb8f7">${escHtml(a.title)}</b>
+        <span style="color:#4ade80;margin-left:4px">실제 ${escHtml(a.actual)}</span>
+        <span style="color:var(--text-muted);font-size:10px;margin-left:6px">${a.analyzed_at.slice(0,16)}</span>
+      </span>`
+    ).join('');
+  } catch(e) {}
+}
+
 function _calRenderList(events) {
   const listEl = document.getElementById('cal-list');
   if (!listEl) return;
@@ -5924,7 +5958,6 @@ function _calRenderList(events) {
       const ic  = _CAL_IC[ev.impact]  || '#7f8c8d';
       const il  = _CAL_IL[ev.impact]  || ev.impact;
       const flag = ev.country === 'KR' ? '🇰🇷' : '🇺🇸';
-      const fid  = `cf-${dateStr}-${ev.key}-${Math.random().toString(36).slice(2,5)}`;
       const hasFc = ev.forecast || ev.previous || ev.actual;
 
       const fcHtml = hasFc ? `<span style="margin-left:8px;font-size:10px;color:var(--text-muted)">`
@@ -5932,6 +5965,21 @@ function _calRenderList(events) {
         + (ev.previous ? `이전 <b>${escHtml(ev.previous)}</b> ` : '')
         + (ev.actual   ? `실제 <b style="color:${ic}">${escHtml(ev.actual)}</b>` : '')
         + `</span>` : '';
+
+      // 분석 드롭다운
+      const anaKey = `${ev.key}|${dateStr}`;
+      const ana = _calAnalyses[anaKey];
+      const anaHtml = ana
+        ? `<details style="margin-top:6px">
+            <summary style="font-size:11px;color:#7eb8f7;cursor:pointer;user-select:none;list-style:none;display:flex;align-items:center;gap:4px">
+              <span>▶</span><span>📊 AI 분석 결과</span>
+              <span style="font-size:10px;color:var(--text-muted);margin-left:4px">${ana.analyzed_at.slice(0,16)}</span>
+            </summary>
+            <div style="margin-top:6px;padding:8px 10px;background:var(--surface2,var(--surface));border-radius:6px;border:1px solid var(--border);font-size:11px;line-height:1.7;color:var(--text);white-space:pre-wrap">${escHtml(ana.analysis)}</div>
+          </details>`
+        : (ev.actual && !ana
+            ? `<div style="margin-top:4px;font-size:10px;color:var(--text-muted)">⏳ 분석 대기 중...</div>`
+            : '');
 
       return `<div id="cal-ev-${dateStr}" style="display:flex;align-items:flex-start;gap:8px;padding:7px 10px;border-left:3px solid ${ic};background:var(--bg);border-radius:0 6px 6px 0;margin-bottom:4px">
         <span style="font-size:14px;flex-shrink:0;margin-top:1px">${ev.icon||'📅'}</span>
@@ -5944,6 +5992,7 @@ function _calRenderList(events) {
           </div>
           <div style="font-size:11px;color:var(--text-muted);margin-top:1px">${escHtml(ev.summary||ev.note||'')}</div>
           ${ev.focus ? `<div style="font-size:11px;color:var(--text-muted);line-height:1.6;padding:5px 8px;margin-top:4px;background:var(--surface);border-radius:4px;border:1px solid var(--border)">${escHtml(ev.focus)}</div>` : ''}
+          ${anaHtml}
         </div>
       </div>`;
     }).join('');

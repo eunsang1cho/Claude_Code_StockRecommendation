@@ -356,6 +356,20 @@ def init_db() -> None:
                 games_json  TEXT NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS calendar_analyses (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                event_key    TEXT NOT NULL,
+                event_date   TEXT NOT NULL,
+                title        TEXT NOT NULL,
+                forecast     TEXT DEFAULT '',
+                previous     TEXT DEFAULT '',
+                actual       TEXT DEFAULT '',
+                analysis     TEXT NOT NULL,
+                analyzed_at  TEXT NOT NULL,
+                UNIQUE(event_key, event_date)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_cal_ana_date ON calendar_analyses(event_date);
             CREATE INDEX IF NOT EXISTS idx_lotto_rec_week ON lotto_recommendations(week_no);
             CREATE INDEX IF NOT EXISTS idx_cms_date ON cms_snapshots(date);
             CREATE INDEX IF NOT EXISTS idx_war_date ON war_indicators(date);
@@ -996,6 +1010,58 @@ def get_news_backfill_status() -> dict:
         'total_articles': total_articles,
         'weeks':         [dict(r) for r in rows],
     }
+
+
+# ── 캘린더 분석 결과 ─────────────────────────────────────────────────────
+
+def save_calendar_analysis(event_key: str, event_date: str, title: str,
+                           forecast: str, previous: str, actual: str,
+                           analysis: str) -> int:
+    """캘린더 이벤트 분석 결과 저장 (이미 있으면 업데이트)."""
+    now = datetime.now().isoformat(timespec="seconds")
+    with _connect() as conn:
+        cur = conn.execute(
+            """INSERT INTO calendar_analyses
+               (event_key, event_date, title, forecast, previous, actual, analysis, analyzed_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(event_key, event_date) DO UPDATE SET
+                 actual=excluded.actual, analysis=excluded.analysis,
+                 analyzed_at=excluded.analyzed_at""",
+            (event_key, event_date, title, forecast, previous, actual, analysis, now),
+        )
+        return cur.lastrowid
+
+
+def get_calendar_analysis(event_key: str, event_date: str) -> dict | None:
+    """특정 이벤트의 분석 결과 조회."""
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM calendar_analyses WHERE event_key=? AND event_date=?",
+            (event_key, event_date),
+        ).fetchone()
+        return dict(row) if row else None
+
+
+def get_calendar_analyses(days: int = 30) -> list[dict]:
+    """최근 N일 분석 결과 전체 조회 (최신순)."""
+    since = (datetime.now() - timedelta(days=days)).strftime('%Y-%m-%d')
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT * FROM calendar_analyses WHERE event_date >= ? ORDER BY analyzed_at DESC",
+            (since,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def get_recent_calendar_alerts(hours: int = 24) -> list[dict]:
+    """최근 N시간 내 분석된 이벤트 반환 (대시보드 알림용)."""
+    since = (datetime.now() - timedelta(hours=hours)).isoformat(timespec="seconds")
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT * FROM calendar_analyses WHERE analyzed_at >= ? ORDER BY analyzed_at DESC",
+            (since,),
+        ).fetchall()
+        return [dict(r) for r in rows]
 
 
 # ── 전쟁지표 ─────────────────────────────────────────────────────────────
