@@ -8,7 +8,7 @@ import os
 import sqlite3
 from datetime import datetime, timedelta
 
-from data_fetcher import get_market_cap
+from data_fetcher import get_market_cap, get_market_cap_us
 
 DIR = os.path.dirname(os.path.abspath(__file__))
 DB_FILE = os.path.join(DIR, "stocks.db")
@@ -382,6 +382,33 @@ def init_db() -> None:
             CREATE INDEX IF NOT EXISTS idx_results_scanned ON scan_results(scanned_at);
             CREATE INDEX IF NOT EXISTS idx_ind_date ON daily_indicators(date);
             CREATE INDEX IF NOT EXISTS idx_future_date ON future_indicators(date);
+
+            CREATE TABLE IF NOT EXISTS liquidity_snapshots (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                date       TEXT NOT NULL UNIQUE,
+                data_json  TEXT NOT NULL,
+                created_at TEXT DEFAULT (datetime('now', 'localtime'))
+            );
+
+            CREATE TABLE IF NOT EXISTS short_radar (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                date       TEXT NOT NULL UNIQUE,
+                data_json  TEXT NOT NULL,
+                created_at TEXT DEFAULT (datetime('now', 'localtime'))
+            );
+
+            CREATE TABLE IF NOT EXISTS smart_money (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                cik        TEXT NOT NULL,
+                quarter    TEXT NOT NULL,
+                data_json  TEXT NOT NULL,
+                saved_at   TEXT DEFAULT (datetime('now', 'localtime')),
+                UNIQUE(cik, quarter)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_liquidity_date ON liquidity_snapshots(date);
+            CREATE INDEX IF NOT EXISTS idx_short_radar_date ON short_radar(date);
+            CREATE INDEX IF NOT EXISTS idx_smart_money_cik ON smart_money(cik);
         """)
     # scan_results 마이그레이션: market 컬럼 추가
     with _connect() as conn:
@@ -460,8 +487,13 @@ def save_scan(results: list[dict], total_candidates: int) -> None:
                 t = r["ticker"]
                 mkt = "KR" if t.isdigit() else "US"
 
-            # 한국 종목만 시가총액 조회 (US는 0)
-            mcap = market_cap if mkt.startswith("KR") or mkt in ("KOSPI", "KOSDAQ") else 0
+            # 시가총액: 한국은 pykrx(원), 미국은 yfinance(USD)
+            if mkt.startswith("KR") or mkt in ("KOSPI", "KOSDAQ"):
+                mcap = market_cap
+            elif mkt.startswith("US"):
+                mcap = get_market_cap_us(r["ticker"])
+            else:
+                mcap = 0
 
             conn.execute(
                 """INSERT INTO scan_results
@@ -493,27 +525,46 @@ def save_scan(results: list[dict], total_candidates: int) -> None:
 
 
 def get_latest() -> list[dict]:
-    """오늘 날짜의 모든 세션 결과 통합 (KR + US 분리 유지, 신뢰도 내림차순)
-    오늘 결과가 없으면 마지막 세션 반환.
+    """KR 최신 세션 + US 최신 세션을 항상 합쳐서 반환 (신뢰도 내림차순).
+    각 시장의 마지막 스캔 결과를 날짜에 관계없이 독립적으로 유지.
     """
-    today = datetime.now().strftime('%Y-%m-%d')
     with _connect() as conn:
-        # 오늘 세션 ID 목록
-        session_rows = conn.execute(
-            "SELECT id FROM scan_sessions WHERE scanned_at >= ? ORDER BY id",
-            (today + 'T00:00:00',),
-        ).fetchall()
+        # KR 최신 세션
+        kr_row = conn.execute(
+            """SELECT id FROM scan_sessions s
+               WHERE EXISTS (
+                   SELECT 1 FROM scan_results r
+                   WHERE r.session_id = s.id
+                     AND (r.market IN ('KOSPI','KOSDAQ') OR r.market LIKE 'KR%')
+               )
+               ORDER BY id DESC LIMIT 1"""
+        ).fetchone()
 
-        if not session_rows:
-            # 오늘 세션 없으면 마지막 세션
+        # US 최신 세션
+        us_row = conn.execute(
+            """SELECT id FROM scan_sessions s
+               WHERE EXISTS (
+                   SELECT 1 FROM scan_results r
+                   WHERE r.session_id = s.id
+                     AND r.market LIKE 'US%'
+               )
+               ORDER BY id DESC LIMIT 1"""
+        ).fetchone()
+
+        session_ids = []
+        if kr_row:
+            session_ids.append(kr_row["id"])
+        if us_row and us_row["id"] not in session_ids:
+            session_ids.append(us_row["id"])
+
+        if not session_ids:
+            # 아무 시장도 없으면 마지막 세션 하나
             last = conn.execute(
                 "SELECT id FROM scan_sessions ORDER BY id DESC LIMIT 1"
             ).fetchone()
             if not last:
                 return []
             session_ids = [last["id"]]
-        else:
-            session_ids = [r["id"] for r in session_rows]
 
         placeholders = ','.join('?' * len(session_ids))
         rows = conn.execute(
@@ -523,13 +574,12 @@ def get_latest() -> list[dict]:
             session_ids,
         ).fetchall()
 
-        # 동일 ticker 중복 제거 (같은 종목이 여러 세션에서 탐지된 경우 최고 신뢰도만)
+        # 동일 ticker 중복 제거 (최고 신뢰도 우선)
         seen: set[str] = set()
         result = []
         for r in rows:
-            key = r["ticker"]
-            if key not in seen:
-                seen.add(key)
+            if r["ticker"] not in seen:
+                seen.add(r["ticker"])
                 result.append(dict(r))
         return result
 
@@ -1014,6 +1064,25 @@ def get_news_backfill_status() -> dict:
 
 # ── 캘린더 분석 결과 ─────────────────────────────────────────────────────
 
+def save_calendar_actual(event_key: str, event_date: str, title: str,
+                          forecast: str = '', previous: str = '',
+                          actual: str = '') -> int:
+    """FRED 실제값만 저장. 기존 analysis 텍스트는 보존."""
+    now = datetime.now().isoformat(timespec="seconds")
+    with _connect() as conn:
+        cur = conn.execute(
+            """INSERT INTO calendar_analyses
+               (event_key, event_date, title, forecast, previous, actual, analysis, analyzed_at)
+               VALUES (?, ?, ?, ?, ?, ?, '', ?)
+               ON CONFLICT(event_key, event_date) DO UPDATE SET
+                 actual=excluded.actual,
+                 title=CASE WHEN excluded.title!='' THEN excluded.title ELSE title END,
+                 analyzed_at=excluded.analyzed_at""",
+            (event_key, event_date, title, forecast, previous, actual, now),
+        )
+        return cur.lastrowid
+
+
 def save_calendar_analysis(event_key: str, event_date: str, title: str,
                            forecast: str, previous: str, actual: str,
                            analysis: str) -> int:
@@ -1230,3 +1299,131 @@ def get_lotto_recommendation(week_no: int) -> list | None:
             (week_no,),
         ).fetchone()
     return json.loads(row["games_json"]) if row else None
+
+
+# ── 유동성 스냅샷 ─────────────────────────────────────────────────────
+
+def save_liquidity_snapshot(date: str, data: dict) -> int:
+    """유동성 스냅샷 저장 (날짜당 1개, UPSERT)."""
+    data_json = json.dumps(data, ensure_ascii=False)
+    with _connect() as conn:
+        cur = conn.execute(
+            """INSERT INTO liquidity_snapshots (date, data_json)
+               VALUES (?, ?)
+               ON CONFLICT(date) DO UPDATE SET
+                 data_json  = excluded.data_json,
+                 created_at = datetime('now', 'localtime')""",
+            (date, data_json),
+        )
+        return cur.lastrowid
+
+
+def get_liquidity_latest() -> dict | None:
+    """가장 최근 유동성 스냅샷 반환."""
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT date, data_json, created_at FROM liquidity_snapshots ORDER BY date DESC LIMIT 1"
+        ).fetchone()
+    if not row:
+        return None
+    try:
+        data = json.loads(row["data_json"])
+    except Exception:
+        data = {}
+    return {"date": row["date"], "data": data, "created_at": row["created_at"]}
+
+
+def get_liquidity_history(days: int = 90) -> list[dict]:
+    """최근 N일 유동성 스냅샷 반환 (오래된→최신 순)."""
+    with _connect() as conn:
+        rows = conn.execute(
+            """SELECT date, data_json, created_at
+               FROM liquidity_snapshots
+               WHERE date >= date('now', ? || ' days')
+               ORDER BY date ASC""",
+            (f"-{days}",),
+        ).fetchall()
+    result = []
+    for row in rows:
+        try:
+            data = json.loads(row["data_json"])
+        except Exception:
+            data = {}
+        result.append({"date": row["date"], "data": data, "created_at": row["created_at"]})
+    return result
+
+
+# ── 공매도 레이더 ─────────────────────────────────────────────────────
+
+def save_short_radar(date: str, data: dict) -> int:
+    """공매도 레이더 저장 (날짜당 1개, UPSERT)."""
+    data_json = json.dumps(data, ensure_ascii=False)
+    with _connect() as conn:
+        cur = conn.execute(
+            """INSERT INTO short_radar (date, data_json)
+               VALUES (?, ?)
+               ON CONFLICT(date) DO UPDATE SET
+                 data_json  = excluded.data_json,
+                 created_at = datetime('now', 'localtime')""",
+            (date, data_json),
+        )
+        return cur.lastrowid
+
+
+def get_short_radar_latest() -> dict | None:
+    """가장 최근 공매도 레이더 데이터 반환."""
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT date, data_json, created_at FROM short_radar ORDER BY date DESC LIMIT 1"
+        ).fetchone()
+    if not row:
+        return None
+    try:
+        data = json.loads(row["data_json"])
+    except Exception:
+        data = {}
+    return {"date": row["date"], "data": data, "created_at": row["created_at"]}
+
+
+# ── 스마트머니 ────────────────────────────────────────────────────────
+
+def save_smart_money(cik: str, quarter: str, data: dict) -> int:
+    """스마트머니 13F 저장 (CIK+분기당 1개, UPSERT)."""
+    data_json = json.dumps(data, ensure_ascii=False)
+    now = datetime.now().isoformat(timespec="seconds")
+    with _connect() as conn:
+        cur = conn.execute(
+            """INSERT INTO smart_money (cik, quarter, data_json, saved_at)
+               VALUES (?, ?, ?, ?)
+               ON CONFLICT(cik, quarter) DO UPDATE SET
+                 data_json = excluded.data_json,
+                 saved_at  = excluded.saved_at""",
+            (cik, quarter, data_json, now),
+        )
+        return cur.lastrowid
+
+
+def get_smart_money_latest() -> list[dict]:
+    """각 CIK별 최신 13F 데이터 반환."""
+    with _connect() as conn:
+        rows = conn.execute(
+            """SELECT cik, quarter, data_json, saved_at
+               FROM smart_money
+               WHERE (cik, quarter) IN (
+                   SELECT cik, MAX(quarter) FROM smart_money GROUP BY cik
+               )
+               ORDER BY cik"""
+        ).fetchall()
+    result = []
+    for row in rows:
+        try:
+            data = json.loads(row["data_json"])
+        except Exception:
+            data = {}
+        result.append({
+            "cik":      row["cik"],
+            "quarter":  row["quarter"],
+            "data":     data,
+            "saved_at": row["saved_at"],
+        })
+    return result

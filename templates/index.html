@@ -428,7 +428,7 @@ td { padding: 6px 10px; font-size: 13px; vertical-align: middle; }
   <button class="tab-btn" onclick="switchTab('indicators')">🔔 금일 지표</button>
   <button class="tab-btn" onclick="switchTab('future')">🧭 미래지표</button>
   <button class="tab-btn" onclick="switchTab('war')">⚔️ 전쟁지표</button>
-  <button class="tab-btn" onclick="switchTab('news')">📰 뉴스</button>
+  <button class="tab-btn" disabled title="일시 비활성화" style="opacity:0.35;cursor:not-allowed">📰 뉴스</button>
   <button class="tab-btn" onclick="switchTab('milestone')">🗓️ 마일스톤</button>
   <button class="tab-btn" onclick="switchTab('history')">전체 이력</button>
   <button class="tab-btn" onclick="switchTab('tracking')">종목별 추적</button>
@@ -438,6 +438,9 @@ td { padding: 6px 10px; font-size: 13px; vertical-align: middle; }
   <button class="tab-btn" onclick="switchTab('algo')">알고리즘 요청</button>
   <button class="tab-btn" onclick="switchTab('lotto')">🎱 로또</button>
   <button class="tab-btn" onclick="switchTab('calendar')">📅 캘린더</button>
+  <button class="tab-btn" onclick="switchTab('liquidity')">💧 유동성</button>
+  <button class="tab-btn" onclick="switchTab('shorting')">📉 공매도</button>
+  <button class="tab-btn" onclick="switchTab('smartmoney')">🧠 스마트머니</button>
 </div>
 
 <!-- ────────────── 탭1: 오늘 스캔 ────────────── -->
@@ -590,8 +593,7 @@ td { padding: 6px 10px; font-size: 13px; vertical-align: middle; }
     <table>
       <thead><tr id="today-thead">
         <th>패턴</th><th>종목명</th><th>신뢰도</th>
-        <th>현재가</th><th>목표가</th><th>손절가</th>
-        <th>매수존</th><th>52주 범위</th><th>시가총액</th><th>삭제</th>
+        <th>현재가</th><th>52주 범위</th><th>시가총액</th><th>삭제</th>
       </tr></thead>
       <tbody id="today-body">
         <tr><td colspan="10" class="loading"><span class="spinner"></span>로딩 중...</td></tr>
@@ -739,8 +741,8 @@ td { padding: 6px 10px; font-size: 13px; vertical-align: middle; }
   <!-- 지표 섹션들 (JS 렌더링) -->
   <div id="ind-sections"></div>
 
-  <!-- 시나리오 (JS 렌더링) -->
-  <div id="ind-scenarios" style="margin-top:14px"></div>
+  <!-- 시나리오 확률예측: 비활성화 -->
+  <div id="ind-scenarios" style="display:none"></div>
 
   <!-- 편집 폼 (JS 렌더링) -->
   <div id="ind-edit-area" style="display:none;margin-top:14px"></div>
@@ -881,7 +883,7 @@ td { padding: 6px 10px; font-size: 13px; vertical-align: middle; }
     <table>
       <thead><tr id="history-thead">
         <th>날짜</th><th>시장</th><th>패턴</th><th>종목명</th><th>신뢰도</th>
-        <th>현재가</th><th>목표가</th><th>손절가</th><th>매수존</th><th>삭제</th>
+        <th>현재가</th><th>삭제</th>
       </tr></thead>
       <tbody id="history-body">
         <tr><td colspan="10" class="loading"><span class="spinner"></span>로딩 중...</td></tr>
@@ -1319,6 +1321,97 @@ td { padding: 6px 10px; font-size: 13px; vertical-align: middle; }
   <div id="cal-list"></div>
 </div>
 
+<!-- ── 유동성 모니터 탭 ──────────────────────────────────────────── -->
+<div class="tab-panel" id="tab-liquidity" style="padding:14px 20px">
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:8px">
+    <div>
+      <span style="font-size:16px;font-weight:700">💧 유동성 모니터</span>
+      <span style="font-size:11px;color:var(--text-muted);margin-left:8px">FRED API — Fed·M2·RRP·지준·TGA</span>
+    </div>
+    <button onclick="loadLiquidity(true)"
+      style="background:var(--surface);border:1px solid var(--border);color:var(--text);padding:5px 12px;border-radius:6px;cursor:pointer;font-size:11px">🔄 새로고침</button>
+  </div>
+
+  <!-- 종합 유동성 카드 -->
+  <div id="liq-total-card" style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:14px;margin-bottom:14px;text-align:center">
+    <div style="font-size:11px;color:var(--text-muted);margin-bottom:4px">종합 유동성 (WALCL + 지준 − RRP − TGA)</div>
+    <div id="liq-total-val" style="font-size:28px;font-weight:800;color:var(--accent)">--</div>
+    <div id="liq-direction" style="font-size:13px;margin-top:4px;color:var(--text-muted)">--</div>
+    <div id="liq-updated" style="font-size:10px;color:var(--text-muted);margin-top:6px"></div>
+  </div>
+
+  <!-- 52주 차트 -->
+  <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:12px;margin-bottom:14px">
+    <div style="font-size:11px;color:var(--text-muted);margin-bottom:8px">종합 유동성 추이 (B$)</div>
+    <div id="liq-chart" style="overflow-x:auto"></div>
+  </div>
+
+  <!-- 5개 지표 카드 -->
+  <div id="liq-components" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:10px"></div>
+</div>
+
+<!-- ── 공매도 레이더 탭 ──────────────────────────────────────────── -->
+<div class="tab-panel" id="tab-shorting" style="padding:14px 20px">
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:8px">
+    <div>
+      <span style="font-size:16px;font-weight:700">📉 공매도 레이더</span>
+      <span style="font-size:11px;color:var(--text-muted);margin-left:8px">KR pykrx Top20 · US 추적종목</span>
+    </div>
+    <button onclick="loadShortRadar(true)"
+      style="background:var(--surface);border:1px solid var(--border);color:var(--text);padding:5px 12px;border-radius:6px;cursor:pointer;font-size:11px">🔄 새로고침</button>
+  </div>
+  <div id="short-updated" style="font-size:11px;color:var(--text-muted);margin-bottom:12px"></div>
+
+  <!-- KR 공매도 -->
+  <div style="margin-bottom:18px">
+    <div style="font-size:13px;font-weight:700;margin-bottom:8px">🇰🇷 KR 공매도 Top20</div>
+    <div style="overflow-x:auto">
+      <table style="width:100%;border-collapse:collapse;font-size:12px">
+        <thead>
+          <tr style="color:var(--text-muted);border-bottom:1px solid var(--border)">
+            <th style="text-align:left;padding:5px 8px">#</th>
+            <th style="text-align:left;padding:5px 8px">종목</th>
+            <th style="text-align:right;padding:5px 8px">코드</th>
+            <th style="text-align:right;padding:5px 8px">공매도비중%</th>
+          </tr>
+        </thead>
+        <tbody id="short-kr-tbody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- US 공매도 -->
+  <div>
+    <div style="font-size:13px;font-weight:700;margin-bottom:8px">🇺🇸 US 추적종목 공매도</div>
+    <div style="overflow-x:auto">
+      <table style="width:100%;border-collapse:collapse;font-size:12px">
+        <thead>
+          <tr style="color:var(--text-muted);border-bottom:1px solid var(--border)">
+            <th style="text-align:left;padding:5px 8px">티커</th>
+            <th style="text-align:left;padding:5px 8px">종목명</th>
+            <th style="text-align:right;padding:5px 8px">Short Float%</th>
+            <th style="text-align:right;padding:5px 8px">Short Ratio</th>
+          </tr>
+        </thead>
+        <tbody id="short-us-tbody"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- ── 스마트머니 탭 ─────────────────────────────────────────────── -->
+<div class="tab-panel" id="tab-smartmoney" style="padding:14px 20px">
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:8px">
+    <div>
+      <span style="font-size:16px;font-weight:700">🧠 스마트머니 추적</span>
+      <span style="font-size:11px;color:var(--text-muted);margin-left:8px">SEC EDGAR 13F-HR</span>
+    </div>
+    <button onclick="loadSmartMoney(true)"
+      style="background:var(--surface);border:1px solid var(--border);color:var(--text);padding:5px 12px;border-radius:6px;cursor:pointer;font-size:11px">🔄 새로고침</button>
+  </div>
+  <div id="sm-investors"></div>
+</div>
+
 <script>
 // ── 다크/라이트 모드 ──────────────────────────────────────────────────
 
@@ -1349,8 +1442,13 @@ document.addEventListener('DOMContentLoaded', () => {
 // ── 유틸 ─────────────────────────────────────────────────────────────
 
 const KRW = n => n ? '₩' + Number(n).toLocaleString('ko-KR') : '—';
-const fmtMcap = n => {
+const fmtMcap = (n, mkt) => {
   if (!n) return '—';
+  if (mkt && isUSMarket(mkt)) {
+    if (n >= 1e12) return '$' + (n / 1e12).toFixed(2) + 'T';
+    if (n >= 1e9)  return '$' + (n / 1e9).toFixed(1) + 'B';
+    return '$' + (n / 1e6).toFixed(0) + 'M';
+  }
   const t = n / 1e12;
   if (t >= 1) return t.toFixed(1) + '조';
   return (n / 1e8).toFixed(0) + '억';
@@ -1453,8 +1551,7 @@ function buildTodayThead() {
   const t = (l, c) => mkTh(l, c, s, 'sortToday');
   return [
     t('패턴', 'pattern'), t('종목명', 'name'), t('신뢰도', 'conf'),
-    t('현재가', 'current_price'), t('목표가', 'target_price'), t('손절가', 'stop_loss'),
-    '<th>매수존</th>', '<th>52주 범위</th>', t('시가총액', 'market_cap'), '<th>삭제</th>',
+    t('현재가', 'current_price'), '<th>52주 범위</th>', t('시가총액', 'market_cap'), '<th>삭제</th>',
   ].join('');
 }
 
@@ -1463,8 +1560,7 @@ function buildHistoryThead() {
   const t = (l, c) => mkTh(l, c, s, 'sortHistory');
   return [
     t('날짜', 'scanned_at'), t('패턴', 'pattern'), t('종목명', 'name'), t('신뢰도', 'conf'),
-    t('현재가', 'current_price'), t('목표가', 'target_price'), t('손절가', 'stop_loss'),
-    '<th>매수존</th>', '<th>삭제</th>',
+    t('현재가', 'current_price'), '<th>삭제</th>',
   ].join('');
 }
 
@@ -1567,11 +1663,6 @@ function renderToday() {
   tbody.innerHTML = sorted.map(r => {
     const mkt = r.market || '';
     const priceCell  = formatStockPrice(r.current_price, mkt);
-    const targetCell = isUSMarket(mkt) ? (r.target_price ? `$${Number(r.target_price).toLocaleString()}` : '—') : KRW(r.target_price);
-    const stopCell   = isUSMarket(mkt) ? (r.stop_loss   ? `$${Number(r.stop_loss).toLocaleString()}`   : '—') : KRW(r.stop_loss);
-    const entryCell  = isUSMarket(mkt)
-      ? (r.entry_low ? `$${Number(r.entry_low).toLocaleString()}~$${Number(r.entry_high).toLocaleString()}` : '—')
-      : entryZone(r);
     return `<tr>
       <td>${badge(r.pattern)}</td>
       <td>
@@ -1581,11 +1672,8 @@ function renderToday() {
       </td>
       <td>${confBar(r.conf)}</td>
       <td style="font-weight:600">${priceCell}</td>
-      <td style="color:var(--yellow)">${targetCell}</td>
-      <td style="color:var(--red)">${stopCell}</td>
-      <td>${entryCell}</td>
       <td>${week52Cell(r.current_price, r.week52_low, r.week52_high)}</td>
-      <td style="font-size:12px;color:var(--text-muted)">${fmtMcap(r.market_cap)}</td>
+      <td style="font-size:12px;color:var(--text-muted)">${fmtMcap(r.market_cap, mkt)}</td>
       <td><button class="btn-del" onclick="deleteRow(${r.id})">삭제</button></td>
     </tr>`;
   }).join('');
@@ -1650,11 +1738,6 @@ function renderHistory() {
   tbody.innerHTML = sorted.map(r => {
     const mkt = r.market || '';
     const priceCell = formatStockPrice(r.current_price, mkt);
-    const targetCell = isUSMarket(mkt) ? (r.target_price ? `$${Number(r.target_price).toLocaleString()}` : '—') : `<span style="color:var(--yellow)">${KRW(r.target_price)}</span>`;
-    const stopCell   = isUSMarket(mkt) ? (r.stop_loss   ? `$${Number(r.stop_loss).toLocaleString()}`   : '—') : `<span style="color:var(--red)">${KRW(r.stop_loss)}</span>`;
-    const entryCell  = isUSMarket(mkt)
-      ? (r.entry_low ? `$${Number(r.entry_low).toLocaleString()}~$${Number(r.entry_high).toLocaleString()}` : '—')
-      : entryZone(r);
     return `<tr>
       <td style="font-size:12px;color:var(--text-muted)">${fmtDate(r.scanned_at)}</td>
       <td>${marketBadge(mkt)}</td>
@@ -1662,9 +1745,6 @@ function renderHistory() {
       <td><strong>${stockLinkByMarket(r.ticker, r.name, mkt)}</strong><br><span style="font-size:11px;color:var(--text-muted)">${escHtml(r.ticker)}</span></td>
       <td>${confBar(r.conf)}</td>
       <td style="font-weight:600">${priceCell}</td>
-      <td>${targetCell}</td>
-      <td>${stopCell}</td>
-      <td>${entryCell}</td>
       <td><button class="btn-del" onclick="deleteRow(${r.id})">삭제</button></td>
     </tr>`;
   }).join('');
@@ -2290,7 +2370,7 @@ function escHtml(str) {
 
 // ── 탭 전환 ──────────────────────────────────────────────────────────
 
-const TAB_NAMES = ['today','indicators','future','war','news','milestone','history','tracking','algotrack','plus1','plus2','algo','lotto','calendar'];
+const TAB_NAMES = ['today','indicators','future','war','news','milestone','history','tracking','algotrack','plus1','plus2','algo','lotto','calendar','liquidity','shorting','smartmoney'];
 const tabLoaded = {};
 
 function switchTab(name) {
@@ -2318,6 +2398,9 @@ function switchTab(name) {
     if (name === 'milestone')  initMilestoneTab();
     if (name === 'lotto')      initLottoTab();
     if (name === 'calendar')   initCalendarTab();
+    if (name === 'liquidity')  loadLiquidity();
+    if (name === 'shorting')   loadShortRadar();
+    if (name === 'smartmoney') loadSmartMoney();
   } else if (name === 'indicators') {
     // 다시 돌아올 때 실시간 재시작
     fetchRealtime();
@@ -5966,20 +6049,31 @@ function _calRenderList(events) {
         + (ev.actual   ? `실제 <b style="color:${ic}">${escHtml(ev.actual)}</b>` : '')
         + `</span>` : '';
 
-      // 분석 드롭다운
+      // 분석 드롭다운 / 버튼
       const anaKey = `${ev.key}|${dateStr}`;
       const ana = _calAnalyses[anaKey];
-      const anaHtml = ana
-        ? `<details style="margin-top:6px">
+      const anaId = `cal-ana-${ev.key}-${dateStr}`;
+      let anaHtml = '';
+      if (ana && ana.analysis) {
+        anaHtml = `<details style="margin-top:6px">
             <summary style="font-size:11px;color:#7eb8f7;cursor:pointer;user-select:none;list-style:none;display:flex;align-items:center;gap:4px">
               <span>▶</span><span>📊 AI 분석 결과</span>
               <span style="font-size:10px;color:var(--text-muted);margin-left:4px">${ana.analyzed_at.slice(0,16)}</span>
             </summary>
             <div style="margin-top:6px;padding:8px 10px;background:var(--surface2,var(--surface));border-radius:6px;border:1px solid var(--border);font-size:11px;line-height:1.7;color:var(--text);white-space:pre-wrap">${escHtml(ana.analysis)}</div>
-          </details>`
-        : (ev.actual && !ana
-            ? `<div style="margin-top:4px;font-size:10px;color:var(--text-muted)">⏳ 분석 대기 중...</div>`
-            : '');
+          </details>`;
+      } else {
+        const actualVal = (ana && ana.actual) || ev.actual || '';
+        if (actualVal) {
+          anaHtml = `<div id="${anaId}" style="margin-top:4px;display:flex;align-items:center;gap:8px">
+            <button onclick="_calAnalyzeEvent('${ev.key}','${dateStr}',this)"
+                    style="font-size:10px;padding:2px 8px;border:1px solid #7eb8f7;border-radius:10px;background:transparent;color:#7eb8f7;cursor:pointer;white-space:nowrap">
+              🤖 분석하기
+            </button>
+            <span style="font-size:10px;color:var(--text-muted)">실제 <b>${escHtml(actualVal)}</b></span>
+          </div>`;
+        }
+      }
 
       return `<div id="cal-ev-${dateStr}" style="display:flex;align-items:flex-start;gap:8px;padding:7px 10px;border-left:3px solid ${ic};background:var(--bg);border-radius:0 6px 6px 0;margin-bottom:4px">
         <span style="font-size:14px;flex-shrink:0;margin-top:1px">${ev.icon||'📅'}</span>
@@ -6012,6 +6106,294 @@ function calScrollToDate(dateStr) {
   // 해당 날짜의 첫 이벤트 행으로 스크롤
   const el = document.getElementById('cal-ev-' + dateStr);
   if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
+async function _calAnalyzeEvent(key, date, btn) {
+  btn.disabled = true;
+  btn.textContent = '⏳ 분석 중...';
+  try {
+    const r = await fetch('/api/calendar/analyze', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({event_key: key, event_date: date}),
+    });
+    const d = await r.json();
+    if (d.ok) {
+      const container = document.getElementById(`cal-ana-${key}-${date}`);
+      const now = new Date().toISOString().slice(0, 16).replace('T', ' ');
+      const detailsHtml = `<details open style="margin-top:6px">
+        <summary style="font-size:11px;color:#7eb8f7;cursor:pointer;user-select:none;list-style:none;display:flex;align-items:center;gap:4px">
+          <span>▶</span><span>📊 AI 분석 결과</span>
+          <span style="font-size:10px;color:var(--text-muted);margin-left:4px">${now}</span>
+        </summary>
+        <div style="margin-top:6px;padding:8px 10px;background:var(--surface2,var(--surface));border-radius:6px;border:1px solid var(--border);font-size:11px;line-height:1.7;color:var(--text);white-space:pre-wrap">${escHtml(d.analysis)}</div>
+      </details>`;
+      if (container) {
+        container.outerHTML = detailsHtml;
+      }
+      // 캐시 갱신
+      await _loadCalAnalyses();
+    } else {
+      btn.disabled = false;
+      btn.textContent = '🤖 분석하기';
+      alert(d.error || '분석 실패');
+    }
+  } catch(e) {
+    btn.disabled = false;
+    btn.textContent = '🤖 분석하기';
+    alert('오류: ' + e.message);
+  }
+}
+
+
+// ── 유동성 모니터 ─────────────────────────────────────────────────────
+
+async function loadLiquidity(force = false) {
+  if (!force && document.getElementById('liq-total-val').textContent !== '--') return;
+  try {
+    const [snapRes, histRes] = await Promise.all([
+      fetch('/api/liquidity'),
+      fetch('/api/liquidity/history?days=90'),
+    ]);
+    const snap = await snapRes.json();
+    const hist = await histRes.json();
+
+    if (!snap.ok) {
+      document.getElementById('liq-total-card').innerHTML =
+        '<div style="color:var(--text-muted);font-size:12px;text-align:center;padding:20px">데이터 없음 — 06:00에 자동 수집됩니다</div>';
+      return;
+    }
+
+    const d = snap.data || {};
+    const total = d.total;
+    const prev  = d.total_prev;
+    const dir   = d.direction || '';
+    const comp  = d.components || {};
+
+    // 종합 카드
+    const delta = (total != null && prev != null) ? (total - prev) : null;
+    const deltaStr = delta != null ? ` (${delta > 0 ? '+' : ''}${delta.toFixed(0)}B$)` : '';
+    const dirColor = dir.includes('공급') ? 'var(--green)' : dir.includes('회수') ? 'var(--red)' : 'var(--text-muted)';
+    document.getElementById('liq-total-val').textContent = total != null ? total.toLocaleString() + ' B$' : '--';
+    document.getElementById('liq-direction').innerHTML =
+      `<span style="color:${dirColor};font-weight:700">${escHtml(dir)}</span><span style="font-size:11px;color:var(--text-muted)">${escHtml(deltaStr)}</span>`;
+    document.getElementById('liq-updated').textContent = '업데이트: ' + (d.updated_at || snap.created_at || '');
+
+    // 컴포넌트 카드 5개
+    const COMP_ORDER = [
+      {key: 'walcl',   sign: +1},
+      {key: 'wresbal', sign: +1},
+      {key: 'rrp',     sign: -1},
+      {key: 'tga',     sign: -1},
+      {key: 'm2sl',    sign: +1},
+    ];
+    const compEl = document.getElementById('liq-components');
+    compEl.innerHTML = COMP_ORDER.map(({key, sign}) => {
+      const c = comp[key];
+      if (!c) return '';
+      const chg = (c.value != null && c.prev != null) ? (c.value - c.prev) : null;
+      const chgColor = chg == null ? 'var(--text-muted)' : chg * sign > 0 ? 'var(--green)' : chg * sign < 0 ? 'var(--red)' : 'var(--text-muted)';
+      const chgStr = chg != null
+        ? `<span style="color:${chgColor};font-size:11px">${chg > 0 ? '+' : ''}${chg.toFixed(0)}B$</span>`
+        : '';
+      const role = sign > 0 ? '<span style="font-size:9px;color:var(--green);margin-left:3px">▲ 공급</span>' : '<span style="font-size:9px;color:var(--red);margin-left:3px">▼ 감소</span>';
+      return `<div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:10px">
+        <div style="font-size:10px;color:var(--text-muted);margin-bottom:4px">${escHtml(c.label || key)}${role}</div>
+        <div style="font-size:15px;font-weight:700">${c.value != null ? c.value.toLocaleString() : '--'} <span style="font-size:10px;font-weight:400">${c.unit || 'B$'}</span></div>
+        <div style="font-size:11px;color:var(--text-muted);margin-top:2px">${chgStr || '전주 대비 —'}</div>
+        <div style="font-size:10px;color:var(--text-muted);margin-top:2px">기준일: ${escHtml(c.date || '')}</div>
+      </div>`;
+    }).join('');
+
+    // SVG 차트
+    const histPts = (hist.history || []).filter(h => h.total != null);
+    if (histPts.length >= 2) {
+      const vals = histPts.map(h => h.total);
+      const mn = Math.min(...vals), mx = Math.max(...vals);
+      const W = Math.min(window.innerWidth - 60, 600), H = 80;
+      const px = (i) => Math.round(i / (histPts.length - 1) * (W - 20) + 10);
+      const py = (v) => Math.round(H - 10 - ((v - mn) / (mx - mn || 1)) * (H - 20));
+      const pts = histPts.map((h, i) => `${px(i)},${py(h.total)}`).join(' ');
+      const last = histPts[histPts.length - 1];
+      document.getElementById('liq-chart').innerHTML =
+        `<svg width="${W}" height="${H}" style="display:block;max-width:100%">
+          <polyline points="${pts}" fill="none" stroke="var(--accent2)" stroke-width="2" stroke-linejoin="round"/>
+          <circle cx="${px(histPts.length-1)}" cy="${py(last.total)}" r="3" fill="var(--accent2)"/>
+          <text x="${px(0)}" y="${H}" font-size="9" fill="var(--text-muted)">${escHtml(histPts[0].date.slice(5))}</text>
+          <text x="${px(histPts.length-1)}" y="${H}" font-size="9" fill="var(--text-muted)" text-anchor="end">${escHtml(last.date.slice(5))}</text>
+        </svg>`;
+    } else {
+      document.getElementById('liq-chart').textContent = '차트 데이터 부족 (최소 2포인트 필요)';
+    }
+  } catch(e) {
+    document.getElementById('liq-total-card').innerHTML =
+      `<div style="color:var(--red);font-size:12px;text-align:center;padding:10px">오류: ${escHtml(e.message)}</div>`;
+  }
+}
+
+// ── 공매도 레이더 ─────────────────────────────────────────────────────
+
+async function loadShortRadar(force = false) {
+  const tbody = document.getElementById('short-kr-tbody');
+  if (!force && tbody && tbody.children.length > 0) return;
+  try {
+    const res = await fetch('/api/short-radar');
+    const d = await res.json();
+
+    const updEl = document.getElementById('short-updated');
+    if (!d.ok) {
+      if (updEl) updEl.textContent = '데이터 없음 — 평일 09:30에 자동 수집됩니다';
+      return;
+    }
+    if (updEl) updEl.textContent = `기준일: ${d.date || ''} / 업데이트: ${d.data?.updated_at || d.created_at || ''}`;
+
+    const data = d.data || {};
+
+    // KR 테이블
+    const krTbody = document.getElementById('short-kr-tbody');
+    const kr = data.kr || [];
+    if (krTbody) {
+      if (!kr.length) {
+        krTbody.innerHTML = '<tr><td colspan="4" style="text-align:center;padding:12px;color:var(--text-muted)">데이터 없음</td></tr>';
+      } else {
+        const maxRate = Math.max(...kr.map(r => r.rate || 0));
+        krTbody.innerHTML = kr.map(row => {
+          const pct = maxRate > 0 ? row.rate / maxRate * 100 : 0;
+          const c = row.rate >= 5 ? 'var(--red)' : row.rate >= 2 ? 'var(--yellow)' : 'var(--text)';
+          return `<tr style="border-bottom:1px solid var(--border)">
+            <td style="padding:5px 8px;color:var(--text-muted)">${row.rank}</td>
+            <td style="padding:5px 8px">
+              <div>${escHtml(row.name)}</div>
+              <div style="background:var(--border);border-radius:2px;height:3px;margin-top:3px;overflow:hidden">
+                <div style="width:${pct}%;height:100%;background:${c};border-radius:2px"></div>
+              </div>
+            </td>
+            <td style="padding:5px 8px;text-align:right;color:var(--text-muted);font-size:11px">${escHtml(String(row.ticker))}</td>
+            <td style="padding:5px 8px;text-align:right;font-weight:700;color:${c}">${row.rate?.toFixed(2)}%</td>
+          </tr>`;
+        }).join('');
+      }
+    }
+
+    // US 테이블
+    const usTbody = document.getElementById('short-us-tbody');
+    const us = data.us || [];
+    if (usTbody) {
+      if (!us.length) {
+        usTbody.innerHTML = '<tr><td colspan="4" style="text-align:center;padding:12px;color:var(--text-muted)">데이터 없음</td></tr>';
+      } else {
+        usTbody.innerHTML = us.map(row => {
+          const sf = row.short_float;
+          const c = sf >= 20 ? 'var(--red)' : sf >= 10 ? 'var(--yellow)' : 'var(--text)';
+          return `<tr style="border-bottom:1px solid var(--border)">
+            <td style="padding:5px 8px;font-weight:700;color:var(--accent)">${escHtml(row.ticker)}</td>
+            <td style="padding:5px 8px;font-size:11px;color:var(--text-muted)">${escHtml(row.name || '')}</td>
+            <td style="padding:5px 8px;text-align:right;font-weight:700;color:${c}">${sf != null ? sf.toFixed(2) + '%' : '—'}</td>
+            <td style="padding:5px 8px;text-align:right;color:var(--text-muted)">${row.short_ratio != null ? row.short_ratio : '—'}</td>
+          </tr>`;
+        }).join('');
+      }
+    }
+  } catch(e) {
+    const updEl = document.getElementById('short-updated');
+    if (updEl) updEl.textContent = '오류: ' + e.message;
+  }
+}
+
+// ── 스마트머니 ────────────────────────────────────────────────────────
+
+function _fmtDollar(v) {
+  if (v == null) return '—';
+  if (v >= 1e12) return '$' + (v/1e12).toFixed(2) + 'T';
+  if (v >= 1e9)  return '$' + (v/1e9).toFixed(1) + 'B';
+  if (v >= 1e6)  return '$' + (v/1e6).toFixed(1) + 'M';
+  return '$' + Number(v).toLocaleString();
+}
+
+async function loadSmartMoney(force = false) {
+  const el = document.getElementById('sm-investors');
+  if (!force && el && el.children.length > 0) return;
+  el.innerHTML = '<div style="color:var(--text-muted);font-size:12px;padding:20px;text-align:center">로딩 중...</div>';
+  try {
+    const res = await fetch('/api/smart-money');
+    const d = await res.json();
+    if (!d.ok || !d.investors?.length) {
+      el.innerHTML = '<div style="color:var(--text-muted);font-size:12px;padding:20px;text-align:center">데이터 없음 — 매주 월요일 08:00에 자동 수집됩니다</div>';
+      return;
+    }
+
+    el.innerHTML = d.investors.map(inv => {
+      const data    = inv.data || {};
+      const name    = data.name || inv.cik;
+      const quarter = data.quarter || inv.quarter || '';
+      const filed   = data.filed_date || '';
+      const total   = data.total_value;
+      const holdings = data.holdings || [];
+      const changes  = data.changes  || {};
+
+      if (data.error) {
+        return `<div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:12px;margin-bottom:10px">
+          <span style="font-weight:700">${escHtml(name)}</span>
+          <span style="color:var(--text-muted);font-size:11px;margin-left:8px">${escHtml(data.error)}</span>
+        </div>`;
+      }
+
+      // 신규매수 / 완전매도 배지
+      const newBuys   = changes.new_buys   || [];
+      const fullSells = changes.full_sells || [];
+      const chgList   = changes.changes    || [];
+
+      const badgesHtml = [
+        newBuys.length   ? `<span style="background:#14532d;color:#4ade80;border-radius:8px;padding:2px 7px;font-size:10px;font-weight:700">🟢 신규매수 ${newBuys.length}</span>` : '',
+        fullSells.length ? `<span style="background:#450a0a;color:#f87171;border-radius:8px;padding:2px 7px;font-size:10px;font-weight:700">🔴 완전매도 ${fullSells.length}</span>` : '',
+      ].filter(Boolean).join(' ');
+
+      // Top10 보유 테이블
+      const top10Html = holdings.slice(0, 10).map((h, i) =>
+        `<tr style="border-bottom:1px solid var(--border)">
+          <td style="padding:4px 6px;color:var(--text-muted)">${i+1}</td>
+          <td style="padding:4px 6px;font-size:12px">${escHtml(h.name)}</td>
+          <td style="padding:4px 6px;text-align:right;font-size:11px;color:var(--accent2)">${_fmtDollar(h.value)}</td>
+        </tr>`
+      ).join('');
+
+      // 변화 목록
+      const chgHtml = chgList.slice(0, 5).map(c => {
+        const arrow = c.delta_pct > 0 ? '▲' : '▼';
+        const col   = c.delta_pct > 0 ? 'var(--green)' : 'var(--red)';
+        return `<div style="font-size:11px;padding:2px 0">
+          <span style="color:${col};font-weight:700">${arrow}${Math.abs(c.delta_pct)}%</span>
+          <span style="color:var(--text);margin-left:5px">${escHtml(c.name)}</span>
+          <span style="color:var(--text-muted);font-size:10px;margin-left:4px">${c.weight_prev}% → ${c.weight_now}%</span>
+        </div>`;
+      }).join('');
+
+      return `<details style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);margin-bottom:10px;overflow:hidden">
+        <summary style="padding:12px 14px;cursor:pointer;list-style:none;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+          <span style="font-size:14px;font-weight:700">${escHtml(name)}</span>
+          <span style="font-size:11px;color:var(--text-muted)">${escHtml(quarter)} · ${escHtml(filed)}</span>
+          <span style="font-size:11px;color:var(--accent2)">${_fmtDollar(total)}</span>
+          <span style="margin-left:auto">${badgesHtml}</span>
+        </summary>
+        <div style="padding:0 14px 14px">
+          ${newBuys.length ? `<div style="margin-bottom:8px"><div style="font-size:11px;font-weight:700;color:#4ade80;margin-bottom:4px">🟢 신규매수</div>${newBuys.slice(0,5).map(h=>`<span style="background:#14532d33;border-radius:4px;padding:2px 6px;font-size:11px;margin-right:4px;margin-bottom:4px;display:inline-block">${escHtml(h.name)}</span>`).join('')}</div>` : ''}
+          ${fullSells.length ? `<div style="margin-bottom:8px"><div style="font-size:11px;font-weight:700;color:#f87171;margin-bottom:4px">🔴 완전매도</div>${fullSells.slice(0,5).map(h=>`<span style="background:#45000a33;border-radius:4px;padding:2px 6px;font-size:11px;margin-right:4px;margin-bottom:4px;display:inline-block">${escHtml(h.name)}</span>`).join('')}</div>` : ''}
+          ${chgHtml ? `<div style="margin-bottom:10px"><div style="font-size:11px;font-weight:700;color:var(--text-muted);margin-bottom:4px">비중 변화 (±5% 이상)</div>${chgHtml}</div>` : ''}
+          <div style="font-size:11px;font-weight:700;color:var(--text-muted);margin-bottom:6px">Top 10 보유</div>
+          <table style="width:100%;border-collapse:collapse">
+            <thead><tr style="color:var(--text-muted);font-size:10px;border-bottom:1px solid var(--border)">
+              <th style="text-align:left;padding:3px 6px">#</th>
+              <th style="text-align:left;padding:3px 6px">종목</th>
+              <th style="text-align:right;padding:3px 6px">보유가치</th>
+            </tr></thead>
+            <tbody>${top10Html}</tbody>
+          </table>
+        </div>
+      </details>`;
+    }).join('');
+  } catch(e) {
+    el.innerHTML = `<div style="color:var(--red);font-size:12px;padding:10px">오류: ${escHtml(e.message)}</div>`;
+  }
 }
 
 

@@ -710,7 +710,7 @@ async def _scheduled_war_indicators(app: Application) -> None:
     existing = _db.get_war_indicators_latest()
     ex_data  = existing["data"] if existing else {}
     try:
-        data = await asyncio.to_thread(wi.fetch_all_war, CLAUDE_KEY, ex_data)
+        data = await asyncio.to_thread(wi.fetch_all_war, '', ex_data)
         _db.save_war_indicators(today, data)
         attacks = data.get("attacks", {})
         total7  = attacks.get("total_7d", {}).get("total", 0)
@@ -798,31 +798,18 @@ async def _scheduled_daily_backfill(app: Application) -> None:
 
 
 async def _scheduled_calendar_analysis(app: Application) -> None:
-    """경제 캘린더 결과 분석 — 3시간마다 (actual 값이 생긴 이벤트 자동 분석)"""
+    """경제 캘린더 FRED 실제값 수집 — 3시간마다 (DB 저장만, Claude 분석은 대시보드 버튼으로)"""
     import calendar_result_fetcher as _crf
-    print("📅 캘린더 결과 분석 체크...")
+    print("📅 캘린더 FRED 실제값 수집 체크...")
     try:
-        analyzed = await asyncio.to_thread(
-            _crf.check_and_analyze_recent_events,
-            CLAUDE_KEY, FRED_KEY, 2,
+        stored = await asyncio.to_thread(
+            _crf.check_and_store_actuals,
+            FRED_KEY, 2,
         )
-        for ev in analyzed:
-            title    = ev.get('title', '')
-            actual   = ev.get('actual', '')
-            forecast = ev.get('forecast', '')
-            analysis = ev.get('analysis', '')
-            msg = (
-                f"📅 *캘린더 업데이트: {title}*\n"
-                f"예상: {forecast or '—'}  →  실제: *{actual}*\n\n"
-                f"{analysis}"
-            )
-            await app.bot.send_message(
-                chat_id=USER_ID,
-                text=msg[:4000],
-                parse_mode="Markdown",
-            )
+        if stored:
+            print(f"  ✅ {len(stored)}개 이벤트 FRED 실제값 저장 완료")
     except Exception as e:
-        print(f"⚠️  캘린더 분석 오류: {e}")
+        print(f"⚠️  캘린더 FRED 수집 오류: {e}")
 
 
 async def _scheduled_crawl(app: Application) -> None:
@@ -836,6 +823,79 @@ async def _scheduled_crawl(app: Application) -> None:
         print("✅ 일일 크롤 완료")
     except Exception as e:
         print(f"⚠️  일일 크롤 오류: {e}")
+
+
+async def _scheduled_liquidity(app: Application) -> None:
+    """유동성 지표 수집 — 매일 06:00"""
+    import liquidity_monitor as lm
+    import database as _db
+    from datetime import datetime as _dt
+
+    today = _dt.now().strftime("%Y-%m-%d")
+    fred_key = os.getenv("FRED_API_KEY", "")
+    if not fred_key:
+        print("⚠️  FRED_API_KEY 없음 — 유동성 수집 건너뜀")
+        return
+    print(f"💧 유동성 지표 수집 시작: {today}")
+    try:
+        data = await asyncio.to_thread(lm.fetch_liquidity, fred_key)
+        if data:
+            _db.save_liquidity_snapshot(today, data)
+            total = data.get("total")
+            direction = data.get("direction", "")
+            print(f"✅ 유동성 수집 완료: {total}B$ {direction}")
+    except Exception as e:
+        print(f"⚠️  유동성 수집 오류: {e}")
+
+
+async def _scheduled_short_radar(app: Application) -> None:
+    """공매도 레이더 수집 — 매일 09:30 (KR 장 개장 직후)"""
+    import short_radar as sr
+    import database as _db
+    from datetime import datetime as _dt
+
+    today = _dt.now().strftime("%Y-%m-%d")
+    print(f"📉 공매도 레이더 수집 시작: {today}")
+    try:
+        data = await asyncio.to_thread(sr.fetch_short_radar)
+        if data:
+            _db.save_short_radar(today, data)
+            kr_cnt = len(data.get("kr", []))
+            us_cnt = len(data.get("us", []))
+            print(f"✅ 공매도 수집 완료: KR {kr_cnt}개 / US {us_cnt}개")
+    except Exception as e:
+        print(f"⚠️  공매도 수집 오류: {e}")
+
+
+async def _scheduled_smart_money(app: Application) -> None:
+    """스마트머니 13F 수집 — 매주 월요일 08:00"""
+    import smart_money as sm
+    import database as _db
+
+    print("🧠 스마트머니 13F 수집 시작...")
+    try:
+        # 기존 데이터 로드 (비교용)
+        existing_rows = _db.get_smart_money_latest()
+        prev_data = {r["cik"]: r["data"] for r in existing_rows}
+
+        data = await asyncio.to_thread(sm.fetch_all_smart_money, prev_data)
+        saved = 0
+        for cik, investor_data in data.items():
+            if investor_data.get("error"):
+                continue
+            quarter = investor_data.get("quarter", "")
+            if quarter:
+                _db.save_smart_money(cik, quarter, investor_data)
+                saved += 1
+
+        print(f"✅ 스마트머니 수집 완료: {saved}명")
+        await app.bot.send_message(
+            chat_id=USER_ID,
+            text=f"🧠 *스마트머니 13F 업데이트*\n{saved}명 수집 완료",
+            parse_mode="Markdown",
+        )
+    except Exception as e:
+        print(f"⚠️  스마트머니 수집 오류: {e}")
 
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -926,33 +986,14 @@ async def post_init(app: Application) -> None:
         args=[app],
     )
 
-    # ⑦ 뉴스 수집 + 분석: 매일 06:30
-    scheduler.add_job(
-        _scheduled_news_collect,
-        "cron",
-        hour=6,
-        minute=30,
-        args=[app],
-    )
+    # ⑦ 뉴스 수집 + 분석: 홀드 (API 토큰 절약)
+    # scheduler.add_job(_scheduled_news_collect, "cron", hour=6, minute=30, args=[app])
 
-    # ⑧ 월말 역사 백필: 매월 마지막 날 23:00
-    scheduler.add_job(
-        _scheduled_month_backfill,
-        "cron",
-        day="last",
-        hour=23,
-        minute=0,
-        args=[app],
-    )
+    # ⑧ 월말 역사 백필: 홀드
+    # scheduler.add_job(_scheduled_month_backfill, "cron", day="last", hour=23, minute=0, args=[app])
 
-    # ⑫ 일일 역사 뉴스 백필: 매일 05:05 (20주씩 누적)
-    scheduler.add_job(
-        _scheduled_daily_backfill,
-        "cron",
-        hour=5,
-        minute=5,
-        args=[app],
-    )
+    # ⑫ 일일 역사 뉴스 백필: 홀드
+    # scheduler.add_job(_scheduled_daily_backfill, "cron", hour=5, minute=5, args=[app])
 
     # ⑬ 경제 캘린더 분석: 3시간마다 (00/03/06/09/12/15/18/21시 30분)
     scheduler.add_job(
@@ -1007,6 +1048,35 @@ async def post_init(app: Application) -> None:
         "cron",
         day_of_week="mon-fri",
         hour=16,
+        minute=0,
+        args=[app],
+    )
+
+    # ⑭ 유동성 지표: 매일 06:00
+    scheduler.add_job(
+        _scheduled_liquidity,
+        "cron",
+        hour=6,
+        minute=0,
+        args=[app],
+    )
+
+    # ⑮ 공매도 레이더: 매일 09:30 (평일)
+    scheduler.add_job(
+        _scheduled_short_radar,
+        "cron",
+        day_of_week="mon-fri",
+        hour=9,
+        minute=30,
+        args=[app],
+    )
+
+    # ⑯ 스마트머니 13F: 매주 월요일 08:00
+    scheduler.add_job(
+        _scheduled_smart_money,
+        "cron",
+        day_of_week="mon",
+        hour=8,
         minute=0,
         args=[app],
     )

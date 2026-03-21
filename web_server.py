@@ -878,7 +878,7 @@ async def api_refresh_war_indicators() -> JSONResponse:
     ex_data  = existing["data"] if existing else {}
     try:
         data = await asyncio.to_thread(
-            wi.fetch_all_war, _CLAUDE_API_KEY, ex_data, _EIA_API_KEY
+            wi.fetch_all_war, '', ex_data, _EIA_API_KEY
         )
     except Exception as e:
         return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
@@ -896,7 +896,7 @@ async def api_bg_refresh_war_indicators() -> JSONResponse:
 
     async def _run():
         try:
-            data = await asyncio.to_thread(wi.fetch_all_war, _CLAUDE_API_KEY, ex_data, _EIA_API_KEY)
+            data = await asyncio.to_thread(wi.fetch_all_war, '', ex_data, _EIA_API_KEY)
             database.save_war_indicators(today, data)
         except Exception as e:
             print(f"[bg-refresh war] 오류: {e}")
@@ -1543,6 +1543,77 @@ async def api_calendar_recent_alerts(hours: int = 24) -> JSONResponse:
     return JSONResponse({"ok": True, "alerts": rows})
 
 
+@app.post("/api/calendar/analyze")
+async def api_calendar_analyze(request: Request) -> JSONResponse:
+    """단일 이벤트 Claude 분석 (버튼 클릭 시 호출)."""
+    import calendar_result_fetcher as _crf
+    _FRED_API_KEY = os.getenv("FRED_API_KEY", "")
+
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"ok": False, "error": "invalid JSON"}, status_code=400)
+
+    event_key  = str(body.get("event_key", "")).strip()
+    event_date = str(body.get("event_date", "")).strip()
+
+    if not event_key or not event_date:
+        return JSONResponse({"ok": False, "error": "event_key, event_date 필요"}, status_code=400)
+
+    if not _CLAUDE_API_KEY:
+        return JSONResponse({"ok": False, "error": "CLAUDE_API_KEY 미설정"}, status_code=500)
+
+    # 기존 분석 캐시 확인
+    existing = database.get_calendar_analysis(event_key, event_date)
+    if existing and existing.get("analysis"):
+        return JSONResponse({"ok": True, "analysis": existing["analysis"], "cached": True})
+
+    # 이벤트 기본 정보 구성
+    ev: dict = {
+        "key":      event_key,
+        "date":     event_date,
+        "title":    (existing or {}).get("title", event_key),
+        "forecast": (existing or {}).get("forecast", ""),
+        "previous": (existing or {}).get("previous", ""),
+        "actual":   (existing or {}).get("actual", ""),
+        "impact":   "high",
+    }
+
+    # actual 없으면 FRED 조회
+    if not ev["actual"] and _FRED_API_KEY:
+        try:
+            fred_result = await asyncio.to_thread(
+                _crf._get_actual_for_event, ev, _FRED_API_KEY
+            )
+            if fred_result:
+                ev["actual"]   = fred_result["actual"]
+                ev["previous"] = ev["previous"] or fred_result.get("previous", "")
+                ev["_fred"]    = fred_result.get("fred_data", {})
+        except Exception as e:
+            print(f"  ⚠️  FRED 조회 실패: {e}")
+
+    if not ev["actual"]:
+        return JSONResponse({"ok": False, "error": "아직 실제값이 발표되지 않았습니다."})
+
+    # Claude 분석
+    try:
+        analysis = await asyncio.to_thread(
+            _crf.analyze_event_with_claude, ev, _CLAUDE_API_KEY
+        )
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": f"Claude 분석 실패: {e}"})
+
+    # DB 저장
+    database.save_calendar_analysis(
+        event_key=event_key, event_date=event_date,
+        title=ev["title"], forecast=ev["forecast"],
+        previous=ev["previous"], actual=ev["actual"],
+        analysis=analysis,
+    )
+
+    return JSONResponse({"ok": True, "analysis": analysis, "actual": ev["actual"]})
+
+
 @app.get("/api/lotto/recent")
 async def api_lotto_recent(limit: int = 20) -> JSONResponse:
     import lotto
@@ -1551,3 +1622,48 @@ async def api_lotto_recent(limit: int = 20) -> JSONResponse:
         return JSONResponse({'ok': False, 'draws': []})
     recent = draws[-(min(limit, len(draws))):][::-1]  # 최신순
     return JSONResponse({'ok': True, 'draws': recent})
+
+
+# ── 유동성 모니터 ────────────────────────────────────────────────────
+
+@app.get("/api/liquidity")
+def api_get_liquidity() -> JSONResponse:
+    """최신 유동성 스냅샷 반환."""
+    row = database.get_liquidity_latest()
+    if not row:
+        return JSONResponse({"ok": False, "error": "데이터 없음"})
+    return JSONResponse({"ok": True, **row})
+
+
+@app.get("/api/liquidity/history")
+def api_get_liquidity_history(days: int = 90) -> JSONResponse:
+    """최근 N일 유동성 히스토리 반환 (차트용)."""
+    days = max(7, min(days, 365))
+    rows = database.get_liquidity_history(days)
+    # total 값만 추출한 시계열 (SVG 차트용)
+    history = [
+        {"date": r["date"], "total": r["data"].get("total")}
+        for r in rows
+        if r["data"].get("total") is not None
+    ]
+    return JSONResponse({"ok": True, "history": history, "snapshots": rows})
+
+
+# ── 공매도 레이더 ────────────────────────────────────────────────────
+
+@app.get("/api/short-radar")
+def api_get_short_radar() -> JSONResponse:
+    """최신 공매도 레이더 데이터 반환."""
+    row = database.get_short_radar_latest()
+    if not row:
+        return JSONResponse({"ok": False, "error": "데이터 없음"})
+    return JSONResponse({"ok": True, **row})
+
+
+# ── 스마트머니 ───────────────────────────────────────────────────────
+
+@app.get("/api/smart-money")
+def api_get_smart_money() -> JSONResponse:
+    """전체 추적 투자자 최신 13F 반환."""
+    rows = database.get_smart_money_latest()
+    return JSONResponse({"ok": True, "investors": rows})
