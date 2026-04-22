@@ -867,6 +867,33 @@ async def _scheduled_short_radar(app: Application) -> None:
         print(f"⚠️  공매도 수집 오류: {e}")
 
 
+async def _scheduled_block_deals(app: Application) -> None:
+    """블록딜 추적 수집 — 매일 07:00 (의회 공시 + SEC Form 4)"""
+    import block_deal_tracker as bdt
+    import database as _db
+
+    print("🕵️ 블록딜 수집 시작...")
+    try:
+        data = await asyncio.to_thread(bdt.fetch_all_block_deals, 30)
+        today = data['fetched_at'][:10]
+        _db.save_block_deals(today, data)
+        s = data['summary']
+        print(f"✅ 블록딜 수집 완료: 총 {s['total']}건 (하원 {s['house_count']} / 상원 {s['senate_count']} / Form4 {s['form4_count']})")
+        top = ', '.join(s['top_tickers'][:5]) if s['top_tickers'] else '없음'
+        await app.bot.send_message(
+            chat_id=USER_ID,
+            text=(
+                f"🕵️ *블록딜 추적 업데이트*\n"
+                f"총 {s['total']}건 | 매수 {s['buy_count']} / 매도 {s['sell_count']}\n"
+                f"하원 {s['house_count']} | 상원 {s['senate_count']} | Form4 {s['form4_count']}\n"
+                f"상위 티커: {top}"
+            ),
+            parse_mode="Markdown",
+        )
+    except Exception as e:
+        print(f"⚠️  블록딜 수집 오류: {e}")
+
+
 async def _scheduled_smart_money(app: Application) -> None:
     """스마트머니 13F 수집 — 매주 월요일 08:00"""
     import smart_money as sm
@@ -1077,6 +1104,15 @@ async def post_init(app: Application) -> None:
         "cron",
         day_of_week="mon",
         hour=8,
+        minute=0,
+        args=[app],
+    )
+
+    # ⑰ 블록딜 추적: 매일 07:00
+    scheduler.add_job(
+        _scheduled_block_deals,
+        "cron",
+        hour=7,
         minute=0,
         args=[app],
     )

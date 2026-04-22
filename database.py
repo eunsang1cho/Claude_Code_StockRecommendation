@@ -406,9 +406,17 @@ def init_db() -> None:
                 UNIQUE(cik, quarter)
             );
 
+            CREATE TABLE IF NOT EXISTS block_deals (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                fetch_date  TEXT NOT NULL UNIQUE,
+                data_json   TEXT NOT NULL,
+                created_at  TEXT DEFAULT (datetime('now', 'localtime'))
+            );
+
             CREATE INDEX IF NOT EXISTS idx_liquidity_date ON liquidity_snapshots(date);
             CREATE INDEX IF NOT EXISTS idx_short_radar_date ON short_radar(date);
             CREATE INDEX IF NOT EXISTS idx_smart_money_cik ON smart_money(cik);
+            CREATE INDEX IF NOT EXISTS idx_block_deals_date ON block_deals(fetch_date);
         """)
     # scan_results 마이그레이션: market 컬럼 추가
     with _connect() as conn:
@@ -1426,4 +1434,64 @@ def get_smart_money_latest() -> list[dict]:
             "data":     data,
             "saved_at": row["saved_at"],
         })
+    return result
+
+
+# ── 블록딜 추적 ───────────────────────────────────────────────────────
+
+def save_block_deals(fetch_date: str, data: dict) -> int:
+    """블록딜 스냅샷 저장 (날짜당 1개, UPSERT)."""
+    data_json = json.dumps(data, ensure_ascii=False)
+    now = datetime.now().isoformat(timespec="seconds")
+    with _connect() as conn:
+        # block_deals 테이블이 없으면 생성 (마이그레이션 대응)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS block_deals (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                fetch_date  TEXT NOT NULL UNIQUE,
+                data_json   TEXT NOT NULL,
+                created_at  TEXT DEFAULT (datetime('now', 'localtime'))
+            )
+        """)
+        cur = conn.execute(
+            """INSERT INTO block_deals (fetch_date, data_json, created_at)
+               VALUES (?, ?, ?)
+               ON CONFLICT(fetch_date) DO UPDATE SET
+                 data_json  = excluded.data_json,
+                 created_at = excluded.created_at""",
+            (fetch_date, data_json, now),
+        )
+        return cur.lastrowid
+
+
+def get_block_deals_latest() -> dict | None:
+    """가장 최근 블록딜 스냅샷 반환."""
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT fetch_date, data_json, created_at FROM block_deals ORDER BY fetch_date DESC LIMIT 1"
+        ).fetchone()
+    if not row:
+        return None
+    try:
+        data = json.loads(row["data_json"])
+    except Exception:
+        data = {}
+    return {"fetch_date": row["fetch_date"], "data": data, "created_at": row["created_at"]}
+
+
+def get_block_deals_history(days: int = 30) -> list[dict]:
+    """최근 N일간 블록딜 스냅샷 목록 반환."""
+    cutoff = (datetime.now() - __import__('datetime').timedelta(days=days)).strftime('%Y-%m-%d')
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT fetch_date, data_json, created_at FROM block_deals WHERE fetch_date >= ? ORDER BY fetch_date DESC",
+            (cutoff,),
+        ).fetchall()
+    result = []
+    for row in rows:
+        try:
+            data = json.loads(row["data_json"])
+        except Exception:
+            data = {}
+        result.append({"fetch_date": row["fetch_date"], "data": data, "created_at": row["created_at"]})
     return result
