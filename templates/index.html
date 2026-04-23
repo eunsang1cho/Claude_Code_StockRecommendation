@@ -410,6 +410,22 @@ td { padding: 6px 10px; font-size: 13px; vertical-align: middle; }
   background: var(--border); border-radius: 4px; height: 8px; flex: 1; overflow: hidden;
 }
 .scenario-bar { height: 100%; border-radius: 4px; }
+
+/* ── 정보 툴팁 ── */
+.info-btn {
+  background: none; border: none; cursor: pointer; padding: 0 2px;
+  font-size: 11px; vertical-align: middle; opacity: 0.6; line-height: 1;
+  color: var(--text-muted);
+}
+.info-btn:hover { opacity: 1; }
+#info-tooltip {
+  position: fixed; z-index: 9999;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 8px; padding: 10px 14px; font-size: 12px;
+  max-width: 280px; line-height: 1.65; color: var(--text);
+  box-shadow: 0 4px 24px rgba(0,0,0,.45);
+  white-space: pre-line; display: none; pointer-events: none;
+}
 </style>
 </head>
 <body>
@@ -439,8 +455,12 @@ td { padding: 6px 10px; font-size: 13px; vertical-align: middle; }
   <button class="tab-btn" onclick="switchTab('lotto')">🎱 로또</button>
   <button class="tab-btn" onclick="switchTab('calendar')">📅 캘린더</button>
   <button class="tab-btn" onclick="switchTab('liquidity')">💧 유동성</button>
-  <button class="tab-btn" onclick="switchTab('shorting')">📉 공매도</button>
-  <button class="tab-btn" onclick="switchTab('smartmoney')">🧠 스마트머니</button>
+  <button class="tab-btn" style="opacity:0.35;cursor:not-allowed" title="KRX API 차단으로 임시 비활성화">📉 공매도</button>
+  <button class="tab-btn" style="opacity:0.35;cursor:not-allowed" title="임시 비활성화">🧠 스마트머니</button>
+  <button onclick="window.open('/game','_blank')"
+    style="padding:6px 14px;border-radius:6px;border:1px solid #7c3aed;background:linear-gradient(135deg,#1e1040,#2d1b69);color:#a78bfa;font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap;flex-shrink:0">
+    🧬 진화 게임
+  </button>
 </div>
 
 <!-- ────────────── 탭1: 오늘 스캔 ────────────── -->
@@ -1185,6 +1205,65 @@ td { padding: 6px 10px; font-size: 13px; vertical-align: middle; }
     <div id="war-proxy-table"></div>
   </div>
 
+  <!-- IranWarLive OSINT 구분선 -->
+  <div style="border-top:2px solid var(--border);margin:18px 0 14px;display:flex;align-items:center;gap:8px">
+    <span style="font-size:13px;font-weight:700;white-space:nowrap">🛰️ IranWarLive OSINT</span>
+    <span style="font-size:11px;color:var(--text-muted)">출처: iranwarlive.com — 검증된 공개 정보 기반</span>
+    <button class="btn" onclick="loadIranWar(true)" style="margin-left:auto;padding:3px 10px;font-size:11px">🔄 갱신</button>
+  </div>
+
+  <!-- 전쟁 타임라인 차트 (일별 이벤트 수 + 사상자) -->
+  <div class="card" style="margin-bottom:12px">
+    <div style="font-size:13px;font-weight:700;margin-bottom:10px">📈 전쟁 전후 추이 (2026-01-28~)</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px">
+      <div id="iran-stat-events" style="background:var(--bg);border-radius:8px;padding:10px;text-align:center">
+        <div style="font-size:22px;font-weight:700;color:var(--red)" id="iran-total-events">—</div>
+        <div style="font-size:11px;color:var(--text-muted)">총 OSINT 이벤트</div>
+      </div>
+      <div style="background:var(--bg);border-radius:8px;padding:10px;text-align:center">
+        <div style="font-size:22px;font-weight:700;color:var(--yellow)" id="iran-total-casualties">—</div>
+        <div style="font-size:11px;color:var(--text-muted)">총 확인 사상자</div>
+      </div>
+    </div>
+    <!-- 일별 이벤트 SVG 차트 -->
+    <div style="font-size:11px;color:var(--text-muted);margin-bottom:4px">일별 이벤트 수 (막대) + 브렌트 원유 (선)</div>
+    <svg id="iran-timeline-svg" width="100%" height="140" style="overflow:visible"></svg>
+  </div>
+
+  <!-- 병력 현황 -->
+  <div class="card" style="margin-bottom:12px">
+    <div style="font-size:13px;font-weight:700;margin-bottom:10px">🪖 주요국 병력 현황</div>
+    <div style="overflow-x:auto">
+      <table style="width:100%;border-collapse:collapse;font-size:12px">
+        <thead>
+          <tr style="border-bottom:1px solid var(--border);color:var(--text-muted)">
+            <th style="padding:5px 8px;text-align:left">국가</th>
+            <th style="padding:5px 8px;text-align:left">진영</th>
+            <th style="padding:5px 8px;text-align:right">추정 병력</th>
+            <th style="padding:5px 8px;text-align:right">군사 사망</th>
+            <th style="padding:5px 8px;text-align:right">민간 사망</th>
+            <th style="padding:5px 8px;text-align:center">상태</th>
+          </tr>
+        </thead>
+        <tbody id="iran-military-tbody">
+          <tr><td colspan="6" style="text-align:center;padding:12px;color:var(--text-muted)">로딩 중...</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- 영공 현황 + 최신 이벤트 -->
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px">
+    <div class="card">
+      <div style="font-size:13px;font-weight:700;margin-bottom:8px">✈️ 영공 현황</div>
+      <div id="iran-airspace" style="font-size:12px"></div>
+    </div>
+    <div class="card">
+      <div style="font-size:13px;font-weight:700;margin-bottom:8px">🎯 최신 이벤트 (최근 5건)</div>
+      <div id="iran-recent-events" style="font-size:11px"></div>
+    </div>
+  </div>
+
 </div>
 
 <div class="tab-panel" id="tab-lotto" style="padding:12px">
@@ -1334,7 +1413,7 @@ td { padding: 6px 10px; font-size: 13px; vertical-align: middle; }
 
   <!-- 종합 유동성 카드 -->
   <div id="liq-total-card" style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:14px;margin-bottom:14px;text-align:center">
-    <div style="font-size:11px;color:var(--text-muted);margin-bottom:4px">종합 유동성 (WALCL + 지준 − RRP − TGA)</div>
+    <div style="font-size:11px;color:var(--text-muted);margin-bottom:4px">종합 유동성 (WALCL + 지준 − RRP − TGA) <button class="info-btn" onclick="showInfo(event,'net_liquidity')">ℹ️</button></div>
     <div id="liq-total-val" style="font-size:28px;font-weight:800;color:var(--accent)">--</div>
     <div id="liq-direction" style="font-size:13px;margin-top:4px;color:var(--text-muted)">--</div>
     <div id="liq-updated" style="font-size:10px;color:var(--text-muted);margin-top:6px"></div>
@@ -1364,7 +1443,7 @@ td { padding: 6px 10px; font-size: 13px; vertical-align: middle; }
 
   <!-- KR 공매도 -->
   <div style="margin-bottom:18px">
-    <div style="font-size:13px;font-weight:700;margin-bottom:8px">🇰🇷 KR 공매도 Top20</div>
+    <div style="font-size:13px;font-weight:700;margin-bottom:8px">🇰🇷 KR 공매도 Top20 <button class="info-btn" onclick="showInfo(event,'short_kr')">ℹ️</button></div>
     <div style="overflow-x:auto">
       <table style="width:100%;border-collapse:collapse;font-size:12px">
         <thead>
@@ -1382,7 +1461,7 @@ td { padding: 6px 10px; font-size: 13px; vertical-align: middle; }
 
   <!-- US 공매도 -->
   <div>
-    <div style="font-size:13px;font-weight:700;margin-bottom:8px">🇺🇸 US 추적종목 공매도</div>
+    <div style="font-size:13px;font-weight:700;margin-bottom:8px">🇺🇸 US 추적종목 공매도 <button class="info-btn" onclick="showInfo(event,'short_us')">ℹ️</button></div>
     <div style="overflow-x:auto">
       <table style="width:100%;border-collapse:collapse;font-size:12px">
         <thead>
@@ -2392,7 +2471,7 @@ function switchTab(name) {
     if (name === 'algotrack')  loadAlgoTracking();
     if (name === 'plus1' || name === 'plus2') loadPlusAnalysis();
     if (name === 'news')       initNewsTab();
-    if (name === 'war')        initWarTab();
+    if (name === 'war')        { initWarTab(); loadIranWar(); }
     if (name === 'algo')       { loadConfigs(); loadRequests(); }
     if (name === 'future')     initFutureTab();
     if (name === 'milestone')  initMilestoneTab();
@@ -6064,15 +6143,17 @@ function _calRenderList(events) {
           </details>`;
       } else {
         const actualVal = (ana && ana.actual) || ev.actual || '';
-        if (actualVal) {
-          anaHtml = `<div id="${anaId}" style="margin-top:4px;display:flex;align-items:center;gap:8px">
-            <button onclick="_calAnalyzeEvent('${ev.key}','${dateStr}',this)"
-                    style="font-size:10px;padding:2px 8px;border:1px solid #7eb8f7;border-radius:10px;background:transparent;color:#7eb8f7;cursor:pointer;white-space:nowrap">
-              🤖 분석하기
-            </button>
-            <span style="font-size:10px;color:var(--text-muted)">실제 <b>${escHtml(actualVal)}</b></span>
-          </div>`;
-        }
+        const searchQ = _calBuildSearchQuery(ev, dateStr, actualVal);
+        const searchUrl = 'https://www.google.com/search?q=' + encodeURIComponent(searchQ);
+        const actualSpan = actualVal
+          ? `<span style="font-size:10px;color:var(--text-muted)">실제 <b>${escHtml(actualVal)}</b></span>` : '';
+        anaHtml = `<div id="${anaId}" style="margin-top:4px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+          <a href="${searchUrl}" target="_blank" rel="noopener"
+             style="font-size:10px;padding:2px 8px;border:1px solid #7eb8f7;border-radius:10px;color:#7eb8f7;text-decoration:none;white-space:nowrap">
+            🔍 검색
+          </a>
+          ${actualSpan}
+        </div>`;
       }
 
       return `<div id="cal-ev-${dateStr}" style="display:flex;align-items:flex-start;gap:8px;padding:7px 10px;border-left:3px solid ${ic};background:var(--bg);border-radius:0 6px 6px 0;margin-bottom:4px">
@@ -6106,6 +6187,51 @@ function calScrollToDate(dateStr) {
   // 해당 날짜의 첫 이벤트 행으로 스크롤
   const el = document.getElementById('cal-ev-' + dateStr);
   if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
+function _calBuildSearchQuery(ev, dateStr, actualVal) {
+  const title = ev.title || '';
+  const mon = dateStr ? dateStr.slice(0, 7) : '';  // YYYY-MM
+
+  // 이벤트 키 → 검색어 템플릿 매핑
+  const QUERY_MAP = {
+    'us_cpi':         `US CPI inflation ${mon} result impact`,
+    'us_core_cpi':    `US core CPI ${mon} result Fed reaction`,
+    'us_pce':         `PCE inflation ${mon} result Fed`,
+    'us_core_pce':    `core PCE ${mon} result interest rate`,
+    'us_nonfarm':     `US nonfarm payrolls ${mon} result jobs market`,
+    'us_unemployment':`US unemployment rate ${mon} result`,
+    'us_gdp':         `US GDP growth ${mon} result economy`,
+    'us_retail':      `US retail sales ${mon} result consumer spending`,
+    'us_ism_mfg':     `ISM manufacturing PMI ${mon} result`,
+    'us_ism_svc':     `ISM services PMI ${mon} result`,
+    'fomc':           `FOMC meeting ${mon} rate decision Fed`,
+    'fomc_minutes':   `FOMC minutes ${mon} Fed interest rate`,
+    'us_ppi':         `US PPI producer price ${mon} result`,
+    'us_housing':     `US housing starts ${mon} result`,
+    'us_durable':     `US durable goods orders ${mon} result`,
+    'us_jolts':       `JOLTS job openings ${mon} result`,
+    'kr_gdp':         `한국 GDP 성장률 ${mon} 결과 경제`,
+    'kr_cpi':         `한국 소비자물가 CPI ${mon} 결과`,
+    'kr_trade':       `한국 무역수지 ${mon} 결과 수출`,
+    'kr_rate':        `한국은행 기준금리 결정 ${mon}`,
+    'ecb_rate':       `ECB interest rate decision ${mon}`,
+    'boj_rate':       `Bank of Japan rate decision ${mon}`,
+    'china_cpi':      `China CPI inflation ${mon} result`,
+    'china_pmi':      `China PMI ${mon} result`,
+  };
+
+  // 매핑된 쿼리가 있으면 사용, 없으면 제목 기반으로 생성
+  if (QUERY_MAP[ev.key]) {
+    return actualVal ? `${QUERY_MAP[ev.key]} actual ${actualVal}` : QUERY_MAP[ev.key];
+  }
+
+  // 기본: 제목 + 날짜 + 실제값
+  let q = title;
+  if (mon) q += ` ${mon}`;
+  if (actualVal) q += ` result ${actualVal}`;
+  else q += ' result impact';
+  return q;
 }
 
 async function _calAnalyzeEvent(key, date, btn) {
@@ -6198,7 +6324,7 @@ async function loadLiquidity(force = false) {
         : '';
       const role = sign > 0 ? '<span style="font-size:9px;color:var(--green);margin-left:3px">▲ 공급</span>' : '<span style="font-size:9px;color:var(--red);margin-left:3px">▼ 감소</span>';
       return `<div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:10px">
-        <div style="font-size:10px;color:var(--text-muted);margin-bottom:4px">${escHtml(c.label || key)}${role}</div>
+        <div style="font-size:10px;color:var(--text-muted);margin-bottom:4px">${escHtml(c.label || key)}${role} <button class="info-btn" onclick="showInfo(event,'${key}')">ℹ️</button></div>
         <div style="font-size:15px;font-weight:700">${c.value != null ? c.value.toLocaleString() : '--'} <span style="font-size:10px;font-weight:400">${c.unit || 'B$'}</span></div>
         <div style="font-size:11px;color:var(--text-muted);margin-top:2px">${chgStr || '전주 대비 —'}</div>
         <div style="font-size:10px;color:var(--text-muted);margin-top:2px">기준일: ${escHtml(c.date || '')}</div>
@@ -6252,8 +6378,15 @@ async function loadShortRadar(force = false) {
     // KR 테이블
     const krTbody = document.getElementById('short-kr-tbody');
     const kr = data.kr || [];
+    const krUnavailable = data.kr_unavailable;
+    const krReason = data.kr_reason || '';
     if (krTbody) {
-      if (!kr.length) {
+      if (krUnavailable) {
+        krTbody.innerHTML = `<tr><td colspan="4" style="text-align:center;padding:16px;color:var(--text-muted)">
+          <div style="font-size:13px;margin-bottom:6px">⚠️ KRX API 접근 불가</div>
+          <div style="font-size:11px;line-height:1.6">${escHtml(krReason)}</div>
+        </td></tr>`;
+      } else if (!kr.length) {
         krTbody.innerHTML = '<tr><td colspan="4" style="text-align:center;padding:12px;color:var(--text-muted)">데이터 없음</td></tr>';
       } else {
         const maxRate = Math.max(...kr.map(r => r.rate || 0));
@@ -6298,6 +6431,148 @@ async function loadShortRadar(force = false) {
     const updEl = document.getElementById('short-updated');
     if (updEl) updEl.textContent = '오류: ' + e.message;
   }
+}
+
+// ── IranWarLive OSINT ────────────────────────────────────────────────
+
+async function loadIranWar(force = false) {
+  const el = document.getElementById('iran-total-events');
+  if (!force && el && el.textContent !== '—') return;
+
+  try {
+    const d = await apiFetch('/api/iran-war/summary');
+    if (!d.ok) return;
+
+    // 숫자 요약
+    document.getElementById('iran-total-events').textContent =
+      (d.total_events || 0).toLocaleString();
+    document.getElementById('iran-total-casualties').textContent =
+      (d.total_casualties || 0).toLocaleString();
+
+    // 타임라인 SVG 차트
+    _renderIranTimeline(d.daily || []);
+
+    // 병력 현황
+    const milTbody = document.getElementById('iran-military-tbody');
+    const mil = d.military || [];
+    if (milTbody) {
+      if (!mil.length) {
+        milTbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:10px;color:var(--text-muted)">데이터 없음</td></tr>';
+      } else {
+        const TOP = ['Iran','United States','Israel'];
+        const sorted = [...mil].sort((a,b) => {
+          const ai = TOP.indexOf(a.country), bi = TOP.indexOf(b.country);
+          if (ai >= 0 && bi >= 0) return ai - bi;
+          if (ai >= 0) return -1;
+          if (bi >= 0) return 1;
+          return (b.military_deaths||0) - (a.military_deaths||0);
+        });
+        milTbody.innerHTML = sorted.map(m => {
+          const isAxis = (m.alliance||'').includes('Axis');
+          const ac = isAxis ? 'var(--red)' : 'var(--accent)';
+          return `<tr style="border-bottom:1px solid var(--border)">
+            <td style="padding:5px 8px;font-weight:600">${escHtml(m.country)}</td>
+            <td style="padding:5px 8px;font-size:11px;color:${ac}">${escHtml(m.alliance||'')}</td>
+            <td style="padding:5px 8px;text-align:right">${escHtml(String(m.est_troops||''))}</td>
+            <td style="padding:5px 8px;text-align:right;color:var(--red)">${(m.military_deaths||0).toLocaleString()}</td>
+            <td style="padding:5px 8px;text-align:right;color:var(--yellow)">${(m.civilian_deaths||0).toLocaleString()}</td>
+            <td style="padding:5px 8px;text-align:center;font-size:11px">${escHtml(m.status||'')}</td>
+          </tr>`;
+        }).join('');
+      }
+    }
+
+    // 영공 현황
+    const airEl = document.getElementById('iran-airspace');
+    const air = d.airspace || [];
+    if (airEl) {
+      if (!air.length) {
+        airEl.innerHTML = '<span style="color:var(--text-muted)">데이터 없음</span>';
+      } else {
+        airEl.innerHTML = air.map(a => {
+          const c = (a.status||'').includes('Closed') ? 'var(--red)' :
+                    (a.status||'').includes('Restricted') ? 'var(--yellow)' : 'var(--green)';
+          return `<div style="display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid var(--border)">
+            <span>${escHtml(a.country)}</span>
+            <span style="font-weight:600;color:${c}">${escHtml(a.status||'')}</span>
+          </div>`;
+        }).join('');
+      }
+    }
+
+    // 최신 이벤트 5건
+    const evtEl = document.getElementById('iran-recent-events');
+    const evts = d.recent_events || [];
+    if (evtEl) {
+      evtEl.innerHTML = evts.map(e => {
+        const ts = (e.timestamp||'').substring(0,10);
+        const c  = (e.casualties||0) > 50 ? 'var(--red)' :
+                   (e.casualties||0) > 0  ? 'var(--yellow)' : 'var(--text)';
+        return `<div style="padding:4px 0;border-bottom:1px solid var(--border)">
+          <div style="display:flex;justify-content:space-between">
+            <span style="color:var(--text-muted)">${ts}</span>
+            <span style="color:${c}">${(e.casualties||0) > 0 ? '사상 '+e.casualties : ''}</span>
+          </div>
+          <div style="margin-top:2px;line-height:1.4">${escHtml((e.target_desc||'').substring(0,80))}${(e.target_desc||'').length>80?'…':''}</div>
+        </div>`;
+      }).join('');
+    }
+
+  } catch(e) {
+    console.warn('loadIranWar 오류:', e);
+  }
+}
+
+function _renderIranTimeline(daily) {
+  const svg = document.getElementById('iran-timeline-svg');
+  if (!svg || !daily.length) return;
+
+  const W = svg.parentElement.clientWidth || 360;
+  const H = 130;
+  const PAD = { t:10, r:10, b:30, l:36 };
+  const iW = W - PAD.l - PAD.r;
+  const iH = H - PAD.t - PAD.b;
+
+  const maxEv  = Math.max(...daily.map(d => d.events || 0), 1);
+  const n      = daily.length;
+  const barW   = Math.max(2, Math.floor(iW / n) - 1);
+
+  // 전쟁 시작일 (2026-02-28) 이전은 회색, 이후는 빨강
+  const WAR_START = '2026-02-28';
+
+  let bars = '', labels = '';
+  daily.forEach((d, i) => {
+    const x  = PAD.l + i * (iW / n);
+    const bh = Math.max(2, (d.events / maxEv) * iH);
+    const y  = PAD.t + iH - bh;
+    const c  = d.date >= WAR_START ? '#e05252' : '#8888aa';
+    bars += `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${barW}" height="${bh.toFixed(1)}" fill="${c}" opacity="0.85"/>`;
+
+    // 날짜 레이블 (격주)
+    if (i % Math.max(1, Math.floor(n/8)) === 0) {
+      labels += `<text x="${(x + barW/2).toFixed(1)}" y="${H - 4}" text-anchor="middle"
+        font-size="9" fill="var(--text-muted)">${d.date.substring(5)}</text>`;
+    }
+  });
+
+  // Y축 눈금
+  const yAxis = [0, Math.round(maxEv/2), maxEv].map(v => {
+    const y = PAD.t + iH - (v / maxEv) * iH;
+    return `<text x="${PAD.l - 3}" y="${y + 3}" text-anchor="end" font-size="9" fill="var(--text-muted)">${v}</text>
+            <line x1="${PAD.l}" y1="${y}" x2="${PAD.l + iW}" y2="${y}" stroke="var(--border)" stroke-width="0.5"/>`;
+  }).join('');
+
+  // 전쟁 시작 수직선
+  const warIdx = daily.findIndex(d => d.date >= WAR_START);
+  let warLine = '';
+  if (warIdx >= 0) {
+    const wx = PAD.l + warIdx * (iW / n);
+    warLine = `<line x1="${wx}" y1="${PAD.t}" x2="${wx}" y2="${PAD.t + iH}" stroke="var(--red)" stroke-width="1.5" stroke-dasharray="4,2"/>
+               <text x="${wx + 3}" y="${PAD.t + 10}" font-size="9" fill="var(--red)">전쟁 시작</text>`;
+  }
+
+  svg.setAttribute('height', H);
+  svg.innerHTML = yAxis + bars + warLine + labels;
 }
 
 // ── 스마트머니 ────────────────────────────────────────────────────────
@@ -6362,15 +6637,24 @@ async function loadSmartMoney(force = false) {
         const arrow = c.delta_pct > 0 ? '▲' : '▼';
         const col   = c.delta_pct > 0 ? 'var(--green)' : 'var(--red)';
         return `<div style="font-size:11px;padding:2px 0">
-          <span style="color:${col};font-weight:700">${arrow}${Math.abs(c.delta_pct)}%</span>
+          <span style="color:${col};font-weight:700">${arrow}${Math.abs(c.delta_pct).toFixed(2)}pp</span>
           <span style="color:var(--text);margin-left:5px">${escHtml(c.name)}</span>
           <span style="color:var(--text-muted);font-size:10px;margin-left:4px">${c.weight_prev}% → ${c.weight_now}%</span>
         </div>`;
       }).join('');
 
+      const SM_INFO_KEY = {
+        '0001067983': 'buffett',      '0001649339': 'burry',
+        '0001336528': 'ackman',       '0001037389': 'renaissance',
+        '0001350694': 'bridgewater',  '0001029160': 'soros',
+        '0001536411': 'druckenmiller','0001135730': 'coatue',
+        '0001167483': 'tiger_global', '0001040273': 'loeb',
+      };
+      const infoKey = SM_INFO_KEY[inv.cik] || 'sm_default';
       return `<details style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);margin-bottom:10px;overflow:hidden">
         <summary style="padding:12px 14px;cursor:pointer;list-style:none;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
           <span style="font-size:14px;font-weight:700">${escHtml(name)}</span>
+          <button class="info-btn" onclick="showInfo(event,'${infoKey}')" style="pointer-events:auto">ℹ️</button>
           <span style="font-size:11px;color:var(--text-muted)">${escHtml(quarter)} · ${escHtml(filed)}</span>
           <span style="font-size:11px;color:var(--accent2)">${_fmtDollar(total)}</span>
           <span style="margin-left:auto">${badgesHtml}</span>
@@ -6378,7 +6662,7 @@ async function loadSmartMoney(force = false) {
         <div style="padding:0 14px 14px">
           ${newBuys.length ? `<div style="margin-bottom:8px"><div style="font-size:11px;font-weight:700;color:#4ade80;margin-bottom:4px">🟢 신규매수</div>${newBuys.slice(0,5).map(h=>`<span style="background:#14532d33;border-radius:4px;padding:2px 6px;font-size:11px;margin-right:4px;margin-bottom:4px;display:inline-block">${escHtml(h.name)}</span>`).join('')}</div>` : ''}
           ${fullSells.length ? `<div style="margin-bottom:8px"><div style="font-size:11px;font-weight:700;color:#f87171;margin-bottom:4px">🔴 완전매도</div>${fullSells.slice(0,5).map(h=>`<span style="background:#45000a33;border-radius:4px;padding:2px 6px;font-size:11px;margin-right:4px;margin-bottom:4px;display:inline-block">${escHtml(h.name)}</span>`).join('')}</div>` : ''}
-          ${chgHtml ? `<div style="margin-bottom:10px"><div style="font-size:11px;font-weight:700;color:var(--text-muted);margin-bottom:4px">비중 변화 (±5% 이상)</div>${chgHtml}</div>` : ''}
+          ${chgHtml ? `<div style="margin-bottom:10px"><div style="font-size:11px;font-weight:700;color:var(--text-muted);margin-bottom:4px">비중 변화 (±0.5pp 이상)</div>${chgHtml}</div>` : ''}
           <div style="font-size:11px;font-weight:700;color:var(--text-muted);margin-bottom:6px">Top 10 보유</div>
           <table style="width:100%;border-collapse:collapse">
             <thead><tr style="color:var(--text-muted);font-size:10px;border-bottom:1px solid var(--border)">
@@ -6394,6 +6678,156 @@ async function loadSmartMoney(force = false) {
   } catch(e) {
     el.innerHTML = `<div style="color:var(--red);font-size:12px;padding:10px">오류: ${escHtml(e.message)}</div>`;
   }
+}
+
+// ── 정보 툴팁 ─────────────────────────────────────────────────────────
+
+const INFO_TEXT = {
+  // 유동성
+  net_liquidity:
+    '종합 순유동성 = Fed 총자산 + 은행 지준 − 역레포(RRP) − TGA\n\n' +
+    '시장에 실질적으로 공급된 달러 총량.\n' +
+    '상승(공급) → 위험자산에 우호적\n' +
+    '하락(회수) → 긴축 신호',
+
+  walcl:
+    'Fed 총자산 (WALCL) · 매주 수요일 발표\n\n' +
+    '연준이 보유한 국채·MBS 합계.\n' +
+    'QE(양적완화)로 증가 → 시장에 달러 공급\n' +
+    'QT(양적긴축)로 감소 → 시장에서 달러 회수',
+
+  wresbal:
+    '은행 지준 (WRESBAL) · 매주 목요일 발표\n\n' +
+    '은행들이 연준에 예치한 초과준비금.\n' +
+    '많을수록 은행이 대출 여력 ↑\n' +
+    '감소하면 대출 확대 또는 시장 불확실성 시그널',
+
+  rrp:
+    '역레포 잔고 (RRP, RRPONTSYD) · 매일 발표\n\n' +
+    '금융기관이 단기로 연준에 맡기는 자금.\n' +
+    '증가 = 시장에서 달러 흡수 → 유동성 감소\n' +
+    '감소 = 시장으로 달러 공급 → 유동성 증가',
+
+  tga:
+    '재무부 현금 잔고 (TGA, WTREGEN) · 매일 발표\n\n' +
+    '미 재무부의 연준 내 당좌계좌.\n' +
+    '감소 = 재정지출 → 시장에 달러 공급\n' +
+    '증가 = 채권발행·세수 → 시장에서 달러 흡수',
+
+  m2sl:
+    'M2 통화량 (M2SL) · 매월 발표\n\n' +
+    '현금 + 요구불예금 + 저축성예금 + MMMF 합계.\n' +
+    '인플레이션·유동성 사이클의 장기 추이 지표.\n' +
+    '순유동성에 직접 포함되지는 않으나 참고용.',
+
+  // 공매도
+  short_kr:
+    'KR 공매도 비중 (pykrx 제공)\n\n' +
+    '전체 거래량 대비 공매도 거래 비율.\n' +
+    '5% 이상 → 강한 하락 베팅\n' +
+    '높을수록 기관·외국인의 매도 압력이 강함.',
+
+  short_us:
+    'US 공매도 지표 (yfinance 제공)\n\n' +
+    'Short Float%: 유통주식 대비 공매도 잔고 비율\n' +
+    '  20% 이상 → 숏스퀴즈(급반등) 리스크 ↑\n\n' +
+    'Short Ratio: 공매도 잔고 ÷ 일평균 거래량\n' +
+    '  높을수록 청산에 오래 걸림 → 스퀴즈 강도 ↑',
+
+  short_float:
+    'Short Float%\n\n유통 주식 대비 공매도 잔고 비율.\n20% 이상이면 숏스퀴즈(급반등) 가능성이 높아짐.',
+
+  short_ratio:
+    'Short Ratio (Days to Cover)\n\n공매도 잔고를 일평균 거래량으로 나눈 값.\n숫자가 높을수록 포지션 청산에 더 오랜 시간이 걸림.',
+
+  // 스마트머니 투자자
+  buffett:
+    '버핏 (버크셔해서웨이)\n\n' +
+    '워런 버핏의 투자 지주사.\n' +
+    '장기 가치투자 철학, 분기별 13F 공시.\n' +
+    '주요 보유: 애플, 아멕스, 뱅크오브아메리카',
+
+  burry:
+    '버리 (사이언 캐피탈)\n\n' +
+    '마이클 버리 — 영화 \'빅쇼트\'의 주인공.\n' +
+    '소수 종목 초집중 역발상 투자.\n' +
+    '포트폴리오 변동성이 매우 크고 경고 성격 강함.',
+
+  ackman:
+    '애크먼 (퍼싱스퀘어)\n\n' +
+    '빌 애크먼, 행동주의 투자자.\n' +
+    '5~10개 종목에 초집중, 공개적 투자 의견.\n' +
+    '주요 보유: 유니버셜뮤직, 힐튼 등',
+
+  tepper:
+    '테퍼 (아팔루사 매니지먼트)\n\n' +
+    '데이비드 테퍼, 글로벌 매크로 전략.\n' +
+    '금리·경기 사이클에 민감한 포트폴리오.\n' +
+    '리스크온/리스크오프 발언으로 시장 영향력 큼.',
+
+  renaissance:
+    '르네상스 테크놀로지\n\n' +
+    '수학자 짐 사이먼스 설립 퀀트 헤지펀드.\n' +
+    '수천 종목에 분산 투자하는 통계 기반 접근.\n' +
+    '메달리온 펀드(내부용)는 공개되지 않음.',
+
+  bridgewater:
+    '브리지워터 어소시에이츠\n\n' +
+    '레이 달리오 설립, 세계 최대 헤지펀드.\n' +
+    '리스크 패리티 전략 — 경기순환과 무관하게 수익 추구.\n' +
+    '올웨더 포트폴리오 개념의 창시자.',
+
+  soros:
+    '소로스 펀드 매니지먼트\n\n' +
+    '조지 소로스 설립, 글로벌 매크로 전략.\n' +
+    '1992년 영국 파운드 공매도(블랙 수요일)로 유명.\n' +
+    '현재는 알렉산더 소로스가 운영.',
+
+  druckenmiller:
+    '드러켄밀러 (듀케인 패밀리 오피스)\n\n' +
+    '스탠리 드러켄밀러. 소로스와 함께 블랙 수요일 주역.\n' +
+    '30년간 연평균 30% 수익. 소수 종목 집중 + 매크로 전략.\n' +
+    '2010년 헤지펀드 폐쇄 후 패밀리 오피스로 운영.',
+
+  coatue:
+    '코아튜 매니지먼트\n\n' +
+    '필립 라퐁 설립, 테크 집중 헤지펀드.\n' +
+    '빅테크·AI·반도체 섹터 비중이 매우 높음.\n' +
+    '타이거 매니지먼트 출신, 타이거 컵스 중 대표적 펀드.',
+
+  tiger_global:
+    '타이거 글로벌 매니지먼트\n\n' +
+    '체이스 콜먼 설립. 줄리안 로버트슨의 타이거 매니지먼트 출신.\n' +
+    '테크·성장주 집중, VC 투자도 병행.\n' +
+    '2022년 대규모 손실 후 포트폴리오 축소.',
+
+  loeb:
+    '로웹 (서드포인트 LLC)\n\n' +
+    '댄 로웹 설립, 행동주의 투자자.\n' +
+    '공개서한으로 기업 경영진에 압박하는 전략으로 유명.\n' +
+    '기술주·소비재 중심, 이벤트 드리븐 접근.',
+};
+
+let _infoTip = null;
+
+function showInfo(event, key) {
+  event.stopPropagation();
+  const text = INFO_TEXT[key] || key;
+  if (!_infoTip) {
+    _infoTip = document.createElement('div');
+    _infoTip.id = 'info-tooltip';
+    document.body.appendChild(_infoTip);
+    document.addEventListener('click', () => { if (_infoTip) _infoTip.style.display = 'none'; });
+  }
+  _infoTip.textContent = text;
+  _infoTip.style.display = 'block';
+  const r = event.target.getBoundingClientRect();
+  let left = r.right + 10;
+  let top  = r.top;
+  if (left + 295 > window.innerWidth)  left = r.left - 305;
+  if (top  + 180 > window.innerHeight) top  = window.innerHeight - 190;
+  _infoTip.style.left = Math.max(8, left) + 'px';
+  _infoTip.style.top  = Math.max(8, top)  + 'px';
 }
 
 

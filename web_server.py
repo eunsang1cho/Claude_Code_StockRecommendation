@@ -28,6 +28,8 @@ _TG_TOKEN       = os.getenv("TELEGRAM_BOT_TOKEN", "")
 _TG_USER_ID     = os.getenv("TELEGRAM_USER_ID", "")
 _CLAUDE_API_KEY = os.getenv("CLAUDE_API_KEY", "")
 _EIA_API_KEY    = os.getenv("EIA_API_KEY", "")
+_OLLAMA_URL     = os.getenv("OLLAMA_URL", "http://localhost:11434")
+_OLLAMA_MODEL   = os.getenv("OLLAMA_MODEL", "qwen2.5:14b")
 
 # 알고리즘 이름 정규화 (자유 입력 → 내부 키)
 _KNOWN_ALGOS = ["골삼이", "골든샘플", "레드삼각", "골삼이(상승초입)"]
@@ -39,6 +41,8 @@ TEMPLATE_FILE = os.path.join(DIR, "templates", "index.html")
 
 # 한국 주식 코드: 6자리 숫자
 _TICKER_RE = re.compile(r'^\d{6}$')
+# US 티커: 1~5 영문 대소문자 (BRK.B 등 점 포함)
+_US_TICKER_RE = re.compile(r'^[A-Za-z]{1,5}(\.[A-Za-z]{1,2})?$')
 
 # 허용된 요청 유형 (화이트리스트)
 _ALLOWED_REQUEST_TYPES = {'정정 요청', '새 알고리즘 제안'}
@@ -192,6 +196,15 @@ def read_root() -> HTMLResponse:
         return HTMLResponse(content=f.read())
 
 
+@app.get("/game", response_class=HTMLResponse)
+def serve_game() -> HTMLResponse:
+    game_file = os.path.join(os.path.dirname(DIR), "Claude_SimGame", "index.html")
+    if not os.path.exists(game_file):
+        return HTMLResponse("<h2>게임 파일을 찾을 수 없습니다.</h2>", status_code=404)
+    with open(game_file, encoding="utf-8") as f:
+        return HTMLResponse(content=f.read())
+
+
 @app.get("/api/latest")
 def api_latest() -> JSONResponse:
     return JSONResponse(database.get_latest())
@@ -217,8 +230,8 @@ def api_stocks(market: str = '') -> JSONResponse:
 
 @app.get("/api/price/{ticker}")
 def api_price(ticker: str) -> JSONResponse:
-    # 형식 검증: 6자리 숫자만 허용
-    if not _TICKER_RE.match(ticker):
+    # 형식 검증: 6자리 숫자(KR) 또는 1~5 영문(US)
+    if not _TICKER_RE.match(ticker) and not _US_TICKER_RE.match(ticker):
         return JSONResponse({"error": "유효하지 않은 종목 코드입니다."}, status_code=400)
 
     now = time.time()
@@ -612,7 +625,7 @@ async def api_bg_refresh_indicators() -> JSONResponse:
 
 @app.delete("/api/stock/{ticker}")
 def api_delete_stock(ticker: str) -> JSONResponse:
-    if not _TICKER_RE.match(ticker):
+    if not _TICKER_RE.match(ticker) and not _US_TICKER_RE.match(ticker):
         return JSONResponse({"error": "유효하지 않은 종목 코드입니다."}, status_code=400)
     count = database.delete_stock_all(ticker)
     return JSONResponse({"ok": True, "deleted": count})
@@ -903,6 +916,32 @@ async def api_bg_refresh_war_indicators() -> JSONResponse:
 
     asyncio.create_task(_run())
     return JSONResponse({"ok": True, "started": True})
+
+
+@app.get("/api/iran-war/summary")
+def api_iran_war_summary() -> JSONResponse:
+    """IranWarLive OSINT 요약: 일별 이벤트 집계 + 병력 + 영공."""
+    daily   = database.get_iran_war_events_daily_summary()
+    military = database.get_iran_war_military()
+    airspace = database.get_iran_war_airspace()
+    events  = database.get_iran_war_events(limit=10)  # 최신 10개
+    return JSONResponse({
+        "ok":       True,
+        "daily":    daily,
+        "military": military,
+        "airspace": airspace,
+        "recent_events": events,
+        "total_events":  sum(d['events'] for d in daily),
+        "total_casualties": sum(d['casualties'] or 0 for d in daily),
+    })
+
+
+@app.get("/api/iran-war/events")
+def api_iran_war_events(since: str = '', limit: int = 200) -> JSONResponse:
+    """이란 전쟁 이벤트 목록."""
+    limit = max(1, min(limit, 500))
+    events = database.get_iran_war_events(since=since or None, limit=limit)
+    return JSONResponse({"ok": True, "events": events, "count": len(events)})
 
 
 @app.get("/api/news")
@@ -1543,9 +1582,27 @@ async def api_calendar_recent_alerts(hours: int = 24) -> JSONResponse:
     return JSONResponse({"ok": True, "alerts": rows})
 
 
+def _analyze_event_ollama(ev: dict) -> str:
+    """Ollama로 경제지표 이벤트 분석 (Claude 크레딧 없을 때 fallback)."""
+    import calendar_result_fetcher as _crf
+    import requests as _req
+
+    prompt = _crf.build_analysis_prompt(ev)
+    try:
+        resp = _req.post(
+            f"{_OLLAMA_URL}/api/generate",
+            json={"model": _OLLAMA_MODEL, "prompt": prompt, "stream": False},
+            timeout=120,
+        )
+        resp.raise_for_status()
+        return resp.json().get("response", "").strip()
+    except Exception as e:
+        raise RuntimeError(f"Ollama 오류: {e}")
+
+
 @app.post("/api/calendar/analyze")
 async def api_calendar_analyze(request: Request) -> JSONResponse:
-    """단일 이벤트 Claude 분석 (버튼 클릭 시 호출)."""
+    """단일 이벤트 분석 (Claude 우선 → Ollama fallback)."""
     import calendar_result_fetcher as _crf
     _FRED_API_KEY = os.getenv("FRED_API_KEY", "")
 
@@ -1560,8 +1617,9 @@ async def api_calendar_analyze(request: Request) -> JSONResponse:
     if not event_key or not event_date:
         return JSONResponse({"ok": False, "error": "event_key, event_date 필요"}, status_code=400)
 
+    # Claude 키 없으면 바로 Ollama fallback
     if not _CLAUDE_API_KEY:
-        return JSONResponse({"ok": False, "error": "CLAUDE_API_KEY 미설정"}, status_code=500)
+        pass  # 아래 fallback 로직에서 처리
 
     # 기존 분석 캐시 확인
     existing = database.get_calendar_analysis(event_key, event_date)
@@ -1595,13 +1653,26 @@ async def api_calendar_analyze(request: Request) -> JSONResponse:
     if not ev["actual"]:
         return JSONResponse({"ok": False, "error": "아직 실제값이 발표되지 않았습니다."})
 
-    # Claude 분석
-    try:
-        analysis = await asyncio.to_thread(
-            _crf.analyze_event_with_claude, ev, _CLAUDE_API_KEY
-        )
-    except Exception as e:
-        return JSONResponse({"ok": False, "error": f"Claude 분석 실패: {e}"})
+    # 분석: Claude 우선 → 실패 시 Ollama fallback
+    analysis = None
+    used_model = "claude"
+
+    if _CLAUDE_API_KEY:
+        try:
+            analysis = await asyncio.to_thread(
+                _crf.analyze_event_with_claude, ev, _CLAUDE_API_KEY
+            )
+        except Exception as e:
+            err = str(e)
+            print(f"[캘린더] Claude 분석 실패 ({err[:80]}), Ollama fallback 시도...")
+
+    if not analysis:
+        # Ollama fallback
+        used_model = "ollama"
+        try:
+            analysis = await asyncio.to_thread(_analyze_event_ollama, ev)
+        except Exception as e:
+            return JSONResponse({"ok": False, "error": f"분석 실패 (Claude + Ollama 모두 오류): {e}"})
 
     # DB 저장
     database.save_calendar_analysis(
@@ -1611,7 +1682,7 @@ async def api_calendar_analyze(request: Request) -> JSONResponse:
         analysis=analysis,
     )
 
-    return JSONResponse({"ok": True, "analysis": analysis, "actual": ev["actual"]})
+    return JSONResponse({"ok": True, "analysis": analysis, "actual": ev["actual"], "model": used_model})
 
 
 @app.get("/api/lotto/recent")

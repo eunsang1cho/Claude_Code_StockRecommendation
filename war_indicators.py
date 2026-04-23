@@ -668,6 +668,9 @@ def fetch_all_war(claude_api_key: str = '', existing: dict = None,
     print('[전쟁지표] ⑥ 전쟁 위기 스코어 계산...')
     war_score = compute_war_score(proxy, attacks, houthi, iran_nuclear)
 
+    print('[전쟁지표] ⑦ IranWarLive OSINT 수집...')
+    iran_war = fetch_iran_war_live()
+
     return {
         'proxy':        proxy,
         'attacks':      attacks,
@@ -675,5 +678,120 @@ def fetch_all_war(claude_api_key: str = '', existing: dict = None,
         'iran_nuclear': iran_nuclear,
         'spr':          spr,
         'war_score':    war_score,
+        'iran_war':     iran_war,
         'updated':      datetime.now().strftime('%Y-%m-%d %H:%M'),
+    }
+
+
+# ── IranWarLive OSINT ────────────────────────────────────────────────────
+
+_IRAN_SHEET = (
+    'https://docs.google.com/spreadsheets/d/e/'
+    '2PACX-1vSyinXiL-Ur469RUBFbu19pDta2jcrmPkJPBdPzlIlENpK_-DInxKtkM_PdxhUzG0ei0-yHhc9aqPRI'
+    '/pub?single=true&output=csv&gid={gid}'
+)
+_GID_EVENTS    = '0'
+_GID_MILITARY  = '2133098001'
+_GID_DIPLOM    = '1935573357'
+_GID_AIRSPACE  = '1498621766'
+
+
+def _fetch_sheet_csv(gid: str) -> list[dict]:
+    """Google Sheets CSV 다운로드 → list[dict]."""
+    import csv, io
+    url = _IRAN_SHEET.format(gid=gid)
+    try:
+        r = requests.get(url, timeout=15, headers={'User-Agent': 'Mozilla/5.0'})
+        r.raise_for_status()
+        reader = csv.DictReader(io.StringIO(r.text))
+        return [row for row in reader]
+    except Exception as e:
+        print(f'[IranWarLive] Sheet gid={gid} 오류: {e}')
+        return []
+
+
+def fetch_iran_war_live() -> dict:
+    """IranWarLive OSINT 데이터 수집 및 DB 저장.
+    반환: summary dict (최근 이벤트 요약, 병력 현황, 영공 상태)
+    """
+    import database as _db
+    today = datetime.now().strftime('%Y-%m-%d')
+
+    # ── 1. 이벤트 (공습/요격 등) ──
+    raw_events = _fetch_sheet_csv(_GID_EVENTS)
+    events = []
+    for row in raw_events:
+        try:
+            lat = float(row.get('Latitude') or 0) or None
+            lon = float(row.get('Longitude') or 0) or None
+            cas = int(row.get('Casualties') or 0)
+        except Exception:
+            lat = lon = None
+            cas = 0
+        events.append({
+            'event_id':   row.get('Event_ID', ''),
+            'timestamp':  row.get('Timestamp', ''),
+            'lat':        lat,
+            'lon':        lon,
+            'strike_type': row.get('Strike_Type', ''),
+            'target_desc': row.get('Target_Description', ''),
+            'source_url':  row.get('Source_URL', ''),
+            'verified_by': row.get('Verified_By', ''),
+            'casualties':  cas,
+            'context':     row.get('Escalation_Context', ''),
+        })
+    if events:
+        _db.upsert_iran_war_events(events)
+
+    # ── 2. 병력 현황 ──
+    raw_mil = _fetch_sheet_csv(_GID_MILITARY)
+    military = []
+    for row in raw_mil:
+        try:
+            military.append({
+                'country':          row.get('Country', ''),
+                'alliance':         row.get('Alliance', ''),
+                'est_troops':       row.get('Est_Troops', ''),
+                'est_aircraft':     row.get('Est_Aircraft', ''),
+                'military_deaths':  int(row.get('Military_Deaths') or 0),
+                'civilian_deaths':  int(row.get('Civilian_Deaths') or 0),
+                'status':           row.get('Status', ''),
+            })
+        except Exception:
+            pass
+    if military:
+        _db.save_iran_war_military(today, military)
+
+    # ── 3. 영공 현황 ──
+    raw_air = _fetch_sheet_csv(_GID_AIRSPACE)
+    airspace = []
+    for row in raw_air:
+        airspace.append({
+            'timestamp': row.get('Timestamp', ''),
+            'country':   row.get('Country', ''),
+            'status':    row.get('Status', ''),
+            'source':    row.get('Source_URL', ''),
+        })
+    if airspace:
+        _db.save_iran_war_airspace(today, airspace)
+
+    # ── 4. 요약 계산 ──
+    total_events     = len(events)
+    total_casualties = sum(e['casualties'] for e in events)
+    recent_events    = sorted(events, key=lambda x: x['timestamp'], reverse=True)[:5]
+    closed_airspace  = [a['country'] for a in airspace if 'Closed' in a.get('status', '')]
+
+    # 서방 vs 이란 사망자
+    western = next((m for m in military if m['country'] == 'United States'), {})
+    iran_m   = next((m for m in military if m['country'] == 'Iran'), {})
+
+    return {
+        'total_events':     total_events,
+        'total_casualties': total_casualties,
+        'recent_events':    recent_events,
+        'military':         military[:10],
+        'airspace_closed':  closed_airspace,
+        'us_deaths':        western.get('military_deaths', 0),
+        'iran_deaths':      iran_m.get('military_deaths', 0),
+        'updated':          today,
     }

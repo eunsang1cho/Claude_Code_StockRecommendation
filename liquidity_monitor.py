@@ -47,6 +47,65 @@ def _fred_obs(series_id: str, api_key: str, limit: int = 10) -> list[tuple[str, 
     return []
 
 
+def fetch_liquidity_historical(api_key: str, periods: int = 13) -> list[dict]:
+    """과거 N주 유동성 스냅샷 목록 반환 (WALCL 날짜 기준으로 forward-fill 보간).
+    periods: 주 단위 포인트 수 (13 ≈ 3개월)
+    반환: [{'date', 'total', 'components'}, ...] 오래된 → 최신 순
+    """
+    if not api_key:
+        return []
+
+    # 충분한 포인트 수집 (버퍼 포함)
+    limit_weekly = max(periods + 5, 20)
+    limit_daily  = periods * 10  # 일간 시리즈는 더 많이 필요
+
+    walcl_obs   = _fred_obs('WALCL',      api_key, limit_weekly)
+    time.sleep(0.3)
+    wresbal_obs = _fred_obs('WRESBAL',    api_key, limit_weekly)
+    time.sleep(0.3)
+    rrp_obs     = _fred_obs('RRPONTSYD',  api_key, limit_daily)
+    time.sleep(0.3)
+    tga_obs     = _fred_obs('WTREGEN',    api_key, limit_daily)
+
+    if not walcl_obs:
+        return []
+
+    def nearest_val(obs_list, target_date):
+        """target_date 이하의 가장 최근 값 반환 (forward-fill)."""
+        for date, val in obs_list:  # 내림차순 정렬됨
+            if date <= target_date:
+                return val
+        return None
+
+    result = []
+    for date, walcl_raw in walcl_obs[:periods]:
+        walcl_b   = walcl_raw / 1000
+        wresbal_r = nearest_val(wresbal_obs, date)
+        rrp       = nearest_val(rrp_obs, date)
+        tga_r     = nearest_val(tga_obs, date)
+
+        if None in (wresbal_r, rrp, tga_r):
+            continue
+
+        wresbal_b = wresbal_r / 1000
+        tga_b     = tga_r / 1000
+        total     = round(walcl_b + wresbal_b - rrp - tga_b, 1)
+
+        result.append({
+            'date':  date,
+            'total': total,
+            'components': {
+                'walcl':   {'value': round(walcl_b, 1),   'unit': 'B$', 'label': 'Fed 총자산'},
+                'wresbal': {'value': round(wresbal_b, 1), 'unit': 'B$', 'label': '은행 지준'},
+                'rrp':     {'value': round(rrp, 1),       'unit': 'B$', 'label': '역레포(RRP)'},
+                'tga':     {'value': round(tga_b, 1),     'unit': 'B$', 'label': 'TGA 잔고'},
+            },
+        })
+
+    result.sort(key=lambda x: x['date'])
+    return result
+
+
 def fetch_liquidity(api_key: str) -> dict:
     """유동성 지표 수집 및 종합 유동성 계산."""
     if not api_key:
@@ -90,11 +149,11 @@ def fetch_liquidity(api_key: str) -> dict:
         }
     time.sleep(0.3)
 
-    # WRESBAL: B$
+    # WRESBAL: M$ → B$
     obs = _fred_obs('WRESBAL', api_key, 4)
     if obs:
-        v = obs[0][1]
-        prev = obs[1][1] if len(obs) > 1 else None
+        v = obs[0][1] / 1000
+        prev = obs[1][1] / 1000 if len(obs) > 1 else None
         raw['wresbal'] = {
             'date': obs[0][0], 'value': round(v, 1),
             'prev': round(prev, 1) if prev is not None else None,

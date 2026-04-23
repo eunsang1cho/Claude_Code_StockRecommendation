@@ -179,8 +179,18 @@ def get_stock_name(ticker: str) -> str:
         return ticker
 
 
-def get_current_price(ticker: str) -> int:
-    """최신 종가 반환"""
+def get_current_price(ticker: str) -> float:
+    """최신 종가 반환 (KR: pykrx 정수, US: yfinance 소수)"""
+    # US 티커 판별 (숫자만으로 구성되지 않으면 US)
+    if not ticker.isdigit():
+        try:
+            import yfinance as yf
+            info = yf.Ticker(ticker).fast_info
+            price = info.get('lastPrice') or info.get('regularMarketPreviousClose') or 0
+            return round(float(price), 2) if price else 0
+        except Exception:
+            return 0
+
     end = datetime.now().strftime("%Y%m%d")
     start = (datetime.now() - timedelta(days=10)).strftime("%Y%m%d")
     try:
@@ -205,6 +215,16 @@ def get_market_cap(ticker: str) -> int:
             pass
         time.sleep(0.1)
     return 0
+
+
+def get_market_cap_us(ticker: str) -> int:
+    """미국 주식 시가총액 (USD 단위). yfinance 사용."""
+    try:
+        import yfinance as yf
+        info = yf.Ticker(ticker).info
+        return int(info.get("marketCap") or 0)
+    except Exception:
+        return 0
 
 
 # ── 미국 주식 (yfinance) ───────────────────────────────────────────────

@@ -309,43 +309,111 @@ def get_events_to_analyze(days_back: int = 30) -> list[dict]:
     return result
 
 
-def build_analysis_prompt(ev: dict, fred_data: dict | None = None) -> str:
-    """Claude에게 전달할 분석 프롬프트 생성."""
-    extra = fred_data or ev.get('_fred', {})
+def build_analysis_prompt(ev: dict) -> str:
+    """웹 검색 기반 뉴스 톤 분석 프롬프트 생성."""
+    extra = ev.get('_fred', {})
     fred_section = ''
     if extra:
         lines = [f"  - {k}: {v}" for k, v in extra.items()]
-        fred_section = '\n추가 지표:\n' + '\n'.join(lines)
+        fred_section = '\n참고 데이터:\n' + '\n'.join(lines)
 
-    return f"""다음 경제지표 발표 결과를 한국 주식 투자자 관점에서 분석해주세요.
+    title   = ev.get('title', '')
+    date    = ev.get('date', '')
+    actual  = ev.get('actual', '')
+    forecast = ev.get('forecast', '') or '미제공'
+    previous = ev.get('previous', '') or '미제공'
 
-이벤트: {ev['title']}
-발표일: {ev['date']}
-예상치: {ev.get('forecast') or '미제공'}
-이전치: {ev.get('previous') or '미제공'}
-실제치: {ev.get('actual')}
-영향도: {ev.get('impact', 'high').upper()}{fred_section}
+    return f"""다음 경제지표 발표에 대해 웹에서 최신 뉴스·반응을 검색한 뒤, 시장 톤 위주로 분석해주세요.
 
-다음 형식으로 간결하게 작성하세요 (총 500자 이내):
-**1. 결과 요약** — 예상 대비 실제 (서프라이즈 여부, 방향)
-**2. 미국 시장** — 주식/채권/달러 단기 방향성
+이벤트: {title}
+발표일: {date}
+예상치: {forecast}
+이전치: {previous}
+실제치: {actual}{fred_section}
+
+【검색 지시】
+- "{title} {date}" 또는 영문 키워드(예: "US PPI February 2026 reaction")로 뉴스 검색
+- FOMC라면 점도표·성명서 변화, CPI/PPI라면 핫/쿨 판단, NFP라면 임금·실업률 톤 포함
+- 발표 직후 시장(선물·채권·환율) 반응 뉴스 우선 참조
+
+【분석 형식】(총 600자 이내, 한국어)
+**1. 뉴스 톤** — 언론·전문가의 전반적 평가 (hawkish/dovish, 우려/안도, 서프라이즈 여부)
+**2. 시장 반응** — 미국 주식·채권·달러 실제 반응 (뉴스 기반)
 **3. 한국 시장** — 코스피·원달러 영향, 주목 섹터
-**4. 핵심 포인트** — 향후 1~2주 가장 중요한 1가지
-
-팩트 중심으로 작성하고 단정적 예측은 피하세요."""
+**4. 핵심 포인트** — 향후 1~2주 투자자가 주시할 1가지"""
 
 
 def analyze_event_with_claude(ev: dict, claude_api_key: str) -> str:
-    """Claude Haiku로 이벤트 분석 텍스트 생성."""
+    """Claude + 웹검색으로 뉴스 톤 기반 이벤트 분석."""
     import anthropic
+
     prompt = build_analysis_prompt(ev)
     client = anthropic.Anthropic(api_key=claude_api_key)
+
     msg = client.messages.create(
         model='claude-haiku-4-5-20251001',
-        max_tokens=700,
+        max_tokens=1024,
+        tools=[{"type": "web_search_20250305", "name": "web_search"}],
         messages=[{'role': 'user', 'content': prompt}],
     )
-    return msg.content[0].text.strip()
+
+    # 텍스트 블록만 추출 (tool_use / tool_result 블록 제외)
+    texts = [
+        block.text for block in msg.content
+        if hasattr(block, 'text') and block.text
+    ]
+    return '\n'.join(texts).strip()
+
+
+def check_and_store_actuals(fred_api_key: str, days_back: int = 3) -> list[dict]:
+    """
+    스케줄러용: FRED 실제값만 DB 저장 (Claude 분석 없음).
+    이미 actual 값이 있는 레코드는 건너뜀.
+    """
+    import database
+
+    candidates = get_events_to_analyze(days_back=days_back)
+    if not candidates:
+        return []
+
+    stored = []
+    for ev in candidates:
+        event_key  = ev.get('key', '')
+        event_date = ev.get('date', '')
+
+        # FRED 매핑 없는 이벤트는 스킵
+        if event_key not in FRED_SERIES_MAP:
+            continue
+
+        # 이미 actual 있으면 스킵
+        existing = database.get_calendar_analysis(event_key, event_date)
+        if existing and existing.get('actual'):
+            continue
+
+        if not fred_api_key:
+            continue
+
+        try:
+            result = _get_actual_for_event(ev, fred_api_key)
+            if not result:
+                print(f"  [캘린더] FRED 데이터 없음: {ev.get('title')} ({event_date})")
+                continue
+
+            database.save_calendar_actual(
+                event_key=event_key,
+                event_date=event_date,
+                title=ev.get('title', ''),
+                forecast=ev.get('forecast', ''),
+                previous=result.get('previous', ''),
+                actual=result['actual'],
+            )
+            stored.append({**ev, 'actual': result['actual']})
+            print(f"  ✅ FRED 저장: {ev.get('title')} actual={result['actual']}")
+        except Exception as e:
+            print(f"  ⚠️  FRED 조회 실패 ({ev.get('title')}): {e}")
+        time.sleep(0.5)
+
+    return stored
 
 
 def check_and_analyze_recent_events(claude_api_key: str,

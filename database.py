@@ -373,6 +373,36 @@ def init_db() -> None:
             CREATE INDEX IF NOT EXISTS idx_lotto_rec_week ON lotto_recommendations(week_no);
             CREATE INDEX IF NOT EXISTS idx_cms_date ON cms_snapshots(date);
             CREATE INDEX IF NOT EXISTS idx_war_date ON war_indicators(date);
+
+            CREATE TABLE IF NOT EXISTS iran_war_events (
+                event_id    TEXT PRIMARY KEY,
+                timestamp   TEXT NOT NULL,
+                lat         REAL,
+                lon         REAL,
+                strike_type TEXT,
+                target_desc TEXT,
+                source_url  TEXT,
+                verified_by TEXT,
+                casualties  INTEGER DEFAULT 0,
+                context     TEXT,
+                saved_at    TEXT DEFAULT (datetime('now', 'localtime'))
+            );
+
+            CREATE TABLE IF NOT EXISTS iran_war_military (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                fetched_date TEXT NOT NULL UNIQUE,
+                data_json   TEXT NOT NULL,
+                saved_at    TEXT DEFAULT (datetime('now', 'localtime'))
+            );
+
+            CREATE TABLE IF NOT EXISTS iran_war_airspace (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                fetched_date TEXT NOT NULL UNIQUE,
+                data_json   TEXT NOT NULL,
+                saved_at    TEXT DEFAULT (datetime('now', 'localtime'))
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_iran_evt_ts ON iran_war_events(timestamp);
             CREATE INDEX IF NOT EXISTS idx_news_pub ON news_articles(published_at);
             CREATE INDEX IF NOT EXISTS idx_news_type ON news_articles(source_type);
             CREATE INDEX IF NOT EXISTS idx_news_analysis_date ON news_analysis(date);
@@ -1198,6 +1228,125 @@ def get_war_indicators(days: int = 30) -> list[dict]:
             data = {}
         result.append({"date": row["date"], "data": data, "created_at": row["created_at"]})
     return result
+
+
+# ── 이란 전쟁 OSINT ────────────────────────────────────────────────────
+
+def upsert_iran_war_events(events: list[dict]) -> int:
+    """이란 전쟁 이벤트 일괄 UPSERT. 반환: 신규 저장 수."""
+    saved = 0
+    with _connect() as conn:
+        for e in events:
+            try:
+                conn.execute(
+                    """INSERT INTO iran_war_events
+                       (event_id, timestamp, lat, lon, strike_type, target_desc,
+                        source_url, verified_by, casualties, context)
+                       VALUES (?,?,?,?,?,?,?,?,?,?)
+                       ON CONFLICT(event_id) DO NOTHING""",
+                    (
+                        e.get('event_id', ''),
+                        e.get('timestamp', ''),
+                        e.get('lat'),
+                        e.get('lon'),
+                        e.get('strike_type', ''),
+                        e.get('target_desc', ''),
+                        e.get('source_url', ''),
+                        e.get('verified_by', ''),
+                        int(e.get('casualties') or 0),
+                        e.get('context', ''),
+                    ),
+                )
+                saved += 1
+            except Exception:
+                pass
+    return saved
+
+
+def get_iran_war_events(since: str = None, limit: int = 200) -> list[dict]:
+    """이란 전쟁 이벤트 조회. since: 'YYYY-MM-DD' 이후."""
+    with _connect() as conn:
+        if since:
+            rows = conn.execute(
+                """SELECT * FROM iran_war_events
+                   WHERE timestamp >= ?
+                   ORDER BY timestamp DESC LIMIT ?""",
+                (since, limit),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM iran_war_events ORDER BY timestamp DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_iran_war_events_daily_summary() -> list[dict]:
+    """날짜별 이벤트 수·사상자 집계."""
+    with _connect() as conn:
+        rows = conn.execute(
+            """SELECT substr(timestamp,1,10) AS date,
+                      COUNT(*) AS events,
+                      SUM(casualties) AS casualties
+               FROM iran_war_events
+               GROUP BY date
+               ORDER BY date ASC"""
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def save_iran_war_military(date: str, data: list[dict]) -> None:
+    """병력 현황 저장 (날짜당 1개)."""
+    with _connect() as conn:
+        conn.execute(
+            """INSERT INTO iran_war_military (fetched_date, data_json)
+               VALUES (?, ?)
+               ON CONFLICT(fetched_date) DO UPDATE SET
+                 data_json = excluded.data_json,
+                 saved_at  = datetime('now','localtime')""",
+            (date, json.dumps(data, ensure_ascii=False)),
+        )
+
+
+def get_iran_war_military() -> list[dict]:
+    """최신 병력 현황 반환."""
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT data_json FROM iran_war_military ORDER BY fetched_date DESC LIMIT 1"
+        ).fetchone()
+    if not row:
+        return []
+    try:
+        return json.loads(row['data_json'])
+    except Exception:
+        return []
+
+
+def save_iran_war_airspace(date: str, data: list[dict]) -> None:
+    """영공 현황 저장."""
+    with _connect() as conn:
+        conn.execute(
+            """INSERT INTO iran_war_airspace (fetched_date, data_json)
+               VALUES (?, ?)
+               ON CONFLICT(fetched_date) DO UPDATE SET
+                 data_json = excluded.data_json,
+                 saved_at  = datetime('now','localtime')""",
+            (date, json.dumps(data, ensure_ascii=False)),
+        )
+
+
+def get_iran_war_airspace() -> list[dict]:
+    """최신 영공 현황 반환."""
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT data_json FROM iran_war_airspace ORDER BY fetched_date DESC LIMIT 1"
+        ).fetchone()
+    if not row:
+        return []
+    try:
+        return json.loads(row['data_json'])
+    except Exception:
+        return []
 
 
 # ── CMS 스냅샷 ─────────────────────────────────────────────────────────
