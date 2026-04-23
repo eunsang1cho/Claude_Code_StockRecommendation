@@ -1738,3 +1738,14 @@ def api_get_smart_money() -> JSONResponse:
     """전체 추적 투자자 최신 13F 반환."""
     rows = database.get_smart_money_latest()
     return JSONResponse({"ok": True, "investors": rows})
+
+
+# ── 블록딜 추적 ───────────────────────────────────────────────────────
+
+@app.get("/api/block-deals")
+def api_get_block_deals() -> JSONResponse:
+    """최신 블록딜(의회 공시 + SEC Form 4) 반환."""
+    row = database.get_block_deals_latest()
+    if not row:
+        return JSONResponse({"ok": True, "fetch_date": None, "data": None})
+    return JSONResponse({"ok": True, "fetch_date": row["fetch_date"], "data": row["data"], "created_at": row["created_at"]})

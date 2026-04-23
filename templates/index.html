@@ -457,6 +457,7 @@ td { padding: 6px 10px; font-size: 13px; vertical-align: middle; }
   <button class="tab-btn" onclick="switchTab('liquidity')">💧 유동성</button>
   <button class="tab-btn" style="opacity:0.35;cursor:not-allowed" title="KRX API 차단으로 임시 비활성화">📉 공매도</button>
   <button class="tab-btn" style="opacity:0.35;cursor:not-allowed" title="임시 비활성화">🧠 스마트머니</button>
+  <button class="tab-btn" onclick="switchTab('blockdeals')">🕵️ 블록딜</button>
   <button onclick="window.open('/game','_blank')"
     style="padding:6px 14px;border-radius:6px;border:1px solid #7c3aed;background:linear-gradient(135deg,#1e1040,#2d1b69);color:#a78bfa;font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap;flex-shrink:0">
     🧬 진화 게임
@@ -1491,6 +1492,79 @@ td { padding: 6px 10px; font-size: 13px; vertical-align: middle; }
   <div id="sm-investors"></div>
 </div>
 
+<!-- ── 블록딜 추적 탭 ──────────────────────────────────────────────── -->
+<div class="tab-panel" id="tab-blockdeals" style="padding:14px 20px">
+
+  <!-- 헤더 -->
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:8px">
+    <div>
+      <span style="font-size:16px;font-weight:700">🕵️ VIP 블록딜 추적</span>
+      <span style="font-size:11px;color:var(--text-muted);margin-left:8px">의회 STOCK Act · SEC Form 4</span>
+    </div>
+    <div style="display:flex;gap:8px;align-items:center">
+      <span id="bd-updated" style="font-size:11px;color:var(--text-muted)"></span>
+      <button onclick="loadBlockDeals(true)"
+        style="background:var(--surface);border:1px solid var(--border);color:var(--text);padding:5px 12px;border-radius:6px;cursor:pointer;font-size:11px">🔄 새로고침</button>
+    </div>
+  </div>
+
+  <!-- 요약 카드 -->
+  <div id="bd-summary" style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px"></div>
+
+  <!-- 필터 바 -->
+  <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;align-items:center">
+    <select id="bd-source-filter" onchange="renderBlockDeals()"
+      style="background:var(--surface);border:1px solid var(--border);color:var(--text);padding:4px 8px;border-radius:6px;font-size:12px">
+      <option value="">전체 소스</option>
+      <option value="House">하원 (House)</option>
+      <option value="Senate">상원 (Senate)</option>
+      <option value="Form4">SEC Form 4</option>
+    </select>
+    <select id="bd-type-filter" onchange="renderBlockDeals()"
+      style="background:var(--surface);border:1px solid var(--border);color:var(--text);padding:4px 8px;border-radius:6px;font-size:12px">
+      <option value="">전체 유형</option>
+      <option value="매수">매수</option>
+      <option value="매도">매도</option>
+    </select>
+    <select id="bd-party-filter" onchange="renderBlockDeals()"
+      style="background:var(--surface);border:1px solid var(--border);color:var(--text);padding:4px 8px;border-radius:6px;font-size:12px">
+      <option value="">전체 정당</option>
+      <option value="R">공화당 (R)</option>
+      <option value="D">민주당 (D)</option>
+    </select>
+    <input id="bd-search" oninput="renderBlockDeals()" placeholder="이름·티커 검색..."
+      style="background:var(--surface);border:1px solid var(--border);color:var(--text);padding:4px 10px;border-radius:6px;font-size:12px;width:160px">
+    <select id="bd-sort" onchange="renderBlockDeals()"
+      style="background:var(--surface);border:1px solid var(--border);color:var(--text);padding:4px 8px;border-radius:6px;font-size:12px">
+      <option value="date">최신 거래순</option>
+      <option value="amount">금액 큰 순</option>
+    </select>
+  </div>
+
+  <!-- 거래 테이블 -->
+  <div class="table-wrap">
+    <table id="bd-table" style="width:100%;border-collapse:collapse;font-size:12px">
+      <thead>
+        <tr style="color:var(--text-muted);font-size:11px;border-bottom:1px solid var(--border)">
+          <th style="padding:6px 8px;text-align:left">거래일</th>
+          <th style="padding:6px 8px;text-align:left">소스</th>
+          <th style="padding:6px 8px;text-align:left">인물</th>
+          <th style="padding:6px 8px;text-align:left">역할</th>
+          <th style="padding:6px 8px;text-align:left">티커</th>
+          <th style="padding:6px 8px;text-align:center">유형</th>
+          <th style="padding:6px 8px;text-align:right">규모</th>
+          <th style="padding:6px 8px;text-align:left">공시일</th>
+          <th style="padding:6px 8px;text-align:left">링크</th>
+        </tr>
+      </thead>
+      <tbody id="bd-tbody">
+        <tr><td colspan="9" style="padding:30px;text-align:center;color:var(--text-muted)">로딩 중...</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div id="bd-count" style="font-size:11px;color:var(--text-muted);margin-top:8px;text-align:right"></div>
+</div>
+
 <script>
 // ── 다크/라이트 모드 ──────────────────────────────────────────────────
 
@@ -2449,7 +2523,7 @@ function escHtml(str) {
 
 // ── 탭 전환 ──────────────────────────────────────────────────────────
 
-const TAB_NAMES = ['today','indicators','future','war','news','milestone','history','tracking','algotrack','plus1','plus2','algo','lotto','calendar','liquidity','shorting','smartmoney'];
+const TAB_NAMES = ['today','indicators','future','war','news','milestone','history','tracking','algotrack','plus1','plus2','algo','lotto','calendar','liquidity','shorting','smartmoney','blockdeals'];
 const tabLoaded = {};
 
 function switchTab(name) {
@@ -2480,6 +2554,7 @@ function switchTab(name) {
     if (name === 'liquidity')  loadLiquidity();
     if (name === 'shorting')   loadShortRadar();
     if (name === 'smartmoney') loadSmartMoney();
+    if (name === 'blockdeals') loadBlockDeals();
   } else if (name === 'indicators') {
     // 다시 돌아올 때 실시간 재시작
     fetchRealtime();
@@ -6828,6 +6903,144 @@ function showInfo(event, key) {
   if (top  + 180 > window.innerHeight) top  = window.innerHeight - 190;
   _infoTip.style.left = Math.max(8, left) + 'px';
   _infoTip.style.top  = Math.max(8, top)  + 'px';
+}
+
+
+// ── 블록딜 추적 ──────────────────────────────────────────────────────
+
+let _bdData = null; // 캐시된 데이터
+
+async function loadBlockDeals(force = false) {
+  if (!force && _bdData) { renderBlockDeals(); return; }
+  const tbody = document.getElementById('bd-tbody');
+  tbody.innerHTML = '<tr><td colspan="9" style="padding:30px;text-align:center;color:var(--text-muted)">데이터 불러오는 중...</td></tr>';
+
+  try {
+    const res = await fetch('/api/block-deals');
+    const d   = await res.json();
+    if (!d.ok || !d.data) {
+      tbody.innerHTML = '<tr><td colspan="9" style="padding:30px;text-align:center;color:var(--text-muted)">데이터 없음 — 매일 07:00에 자동 수집됩니다</td></tr>';
+      return;
+    }
+
+    _bdData = d.data;
+    document.getElementById('bd-updated').textContent = '수집: ' + (d.data.fetched_at || d.fetch_date || '');
+    _renderBdSummary(d.data.summary || {});
+    renderBlockDeals();
+  } catch(e) {
+    tbody.innerHTML = `<tr><td colspan="9" style="padding:30px;text-align:center;color:var(--red)">오류: ${escHtml(e.message)}</td></tr>`;
+  }
+}
+
+function _renderBdSummary(s) {
+  const el = document.getElementById('bd-summary');
+  const cards = [
+    { label: '총 거래', value: (s.total || 0) + '건', color: 'var(--accent2)' },
+    { label: '하원', value: (s.house_count || 0) + '건', color: 'var(--text)' },
+    { label: '상원', value: (s.senate_count || 0) + '건', color: 'var(--text)' },
+    { label: 'SEC Form4', value: (s.form4_count || 0) + '건', color: 'var(--text)' },
+    { label: '매수', value: (s.buy_count || 0) + '건', color: 'var(--green)' },
+    { label: '매도', value: (s.sell_count || 0) + '건', color: 'var(--red)' },
+  ];
+  el.innerHTML = cards.map(c =>
+    `<div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:8px 14px;min-width:80px">
+      <div style="font-size:10px;color:var(--text-muted)">${c.label}</div>
+      <div style="font-size:18px;font-weight:700;color:${c.color}">${c.value}</div>
+    </div>`
+  ).join('');
+
+  // 상위 티커 태그
+  if (s.top_tickers?.length) {
+    el.innerHTML += `<div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:8px 14px;flex:1;min-width:180px">
+      <div style="font-size:10px;color:var(--text-muted);margin-bottom:4px">상위 거래 티커</div>
+      <div>${s.top_tickers.slice(0,8).map(t =>
+        `<span style="background:var(--surface2);border:1px solid var(--border);border-radius:4px;padding:2px 7px;font-size:11px;margin-right:4px;font-weight:600">${escHtml(t)}</span>`
+      ).join('')}</div>
+    </div>`;
+  }
+}
+
+function renderBlockDeals() {
+  if (!_bdData) return;
+
+  const sourceF = document.getElementById('bd-source-filter').value;
+  const typeF   = document.getElementById('bd-type-filter').value;
+  const partyF  = document.getElementById('bd-party-filter').value;
+  const search  = (document.getElementById('bd-search').value || '').toLowerCase();
+  const sortBy  = document.getElementById('bd-sort').value;
+
+  // 전체 거래 합치기
+  let trades = [
+    ...(_bdData.house  || []),
+    ...(_bdData.senate || []),
+    ...(_bdData.form4  || []),
+  ];
+
+  // 필터
+  if (sourceF) trades = trades.filter(t => t.source === sourceF);
+  if (typeF)   trades = trades.filter(t => t.trade_type === typeF);
+  if (partyF)  trades = trades.filter(t => (t.party || '').includes(partyF));
+  if (search)  trades = trades.filter(t =>
+    (t.person || '').toLowerCase().includes(search) ||
+    (t.ticker || '').toLowerCase().includes(search) ||
+    (t.asset_description || '').toLowerCase().includes(search)
+  );
+
+  // 정렬
+  if (sortBy === 'amount') {
+    trades.sort((a, b) => (b.amount_val || 0) - (a.amount_val || 0));
+  } else {
+    trades.sort((a, b) => (b.trade_date || '').localeCompare(a.trade_date || ''));
+  }
+
+  const tbody = document.getElementById('bd-tbody');
+  if (!trades.length) {
+    tbody.innerHTML = '<tr><td colspan="9" style="padding:20px;text-align:center;color:var(--text-muted)">해당 조건의 거래 없음</td></tr>';
+    document.getElementById('bd-count').textContent = '';
+    return;
+  }
+
+  tbody.innerHTML = trades.slice(0, 300).map(t => {
+    const isBuy  = t.trade_type === '매수';
+    const isSell = t.trade_type === '매도';
+    const typeColor = isBuy ? 'var(--green)' : isSell ? 'var(--red)' : 'var(--text-muted)';
+    const typeBg    = isBuy ? '#14532d33' : isSell ? '#45000a33' : 'transparent';
+
+    const sourceLabel = { House: '하원', Senate: '상원', Form4: 'Form4' }[t.source] || t.source;
+    const sourceColor = { House: '#3b82f6', Senate: '#a855f7', Form4: '#f59e0b' }[t.source] || 'var(--text-muted)';
+
+    const partyBadge = t.party
+      ? `<span style="font-size:9px;padding:1px 5px;border-radius:3px;margin-left:4px;background:${t.party.includes('R') ? '#7f1d1d55' : '#1e3a5f55'};color:${t.party.includes('R') ? '#fca5a5' : '#93c5fd'}">${escHtml(t.party)}</span>`
+      : '';
+
+    const tickerHtml = t.ticker
+      ? `<a href="https://finance.yahoo.com/quote/${encodeURIComponent(t.ticker)}" target="_blank"
+           style="color:var(--accent2);font-weight:700;text-decoration:none">${escHtml(t.ticker)}</a>`
+      : `<span style="color:var(--text-muted);font-size:11px">${escHtml(t.asset_description || '—').slice(0,30)}</span>`;
+
+    const linkHtml = t.link
+      ? `<a href="${escHtml(t.link)}" target="_blank" style="color:var(--text-muted);font-size:10px;text-decoration:none">📄</a>`
+      : '';
+
+    return `<tr style="border-bottom:1px solid var(--border);transition:background 0.15s" onmouseover="this.style.background='var(--surface)'" onmouseout="this.style.background=''">
+      <td style="padding:6px 8px;color:var(--text-muted);white-space:nowrap">${escHtml(t.trade_date || '—')}</td>
+      <td style="padding:6px 8px"><span style="font-size:10px;font-weight:700;color:${sourceColor}">${sourceLabel}</span></td>
+      <td style="padding:6px 8px;max-width:160px;overflow:hidden;text-overflow:ellipsis">
+        <span style="font-size:12px">${escHtml(t.person || '—')}</span>${partyBadge}
+        ${t.state ? `<span style="font-size:10px;color:var(--text-muted);margin-left:4px">${escHtml(t.state)}</span>` : ''}
+      </td>
+      <td style="padding:6px 8px;font-size:11px;color:var(--text-muted)">${escHtml(t.role || '—')}</td>
+      <td style="padding:6px 8px">${tickerHtml}</td>
+      <td style="padding:6px 8px;text-align:center">
+        <span style="background:${typeBg};color:${typeColor};font-weight:700;font-size:11px;padding:2px 8px;border-radius:99px">${escHtml(t.trade_type || '—')}</span>
+      </td>
+      <td style="padding:6px 8px;text-align:right;font-weight:700;white-space:nowrap">${escHtml(t.amount_str || '—')}</td>
+      <td style="padding:6px 8px;color:var(--text-muted);white-space:nowrap;font-size:11px">${escHtml(t.filed_date || '—')}</td>
+      <td style="padding:6px 8px;text-align:center">${linkHtml}</td>
+    </tr>`;
+  }).join('');
+
+  document.getElementById('bd-count').textContent = `${trades.length}건 표시 중 (최대 300)`;
 }
 
 
