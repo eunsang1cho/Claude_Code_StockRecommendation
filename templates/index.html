@@ -443,8 +443,6 @@ td { padding: 6px 10px; font-size: 13px; vertical-align: middle; }
   <button class="tab-btn active" onclick="switchTab('today')">오늘 스캔</button>
   <button class="tab-btn" onclick="switchTab('indicators')">🔔 금일 지표</button>
   <button class="tab-btn" onclick="switchTab('future')">🧭 미래지표</button>
-  <button class="tab-btn" onclick="switchTab('war')">⚔️ 전쟁지표</button>
-  <button class="tab-btn" disabled title="일시 비활성화" style="opacity:0.35;cursor:not-allowed">📰 뉴스</button>
   <button class="tab-btn" onclick="switchTab('milestone')">🗓️ 마일스톤</button>
   <button class="tab-btn" onclick="switchTab('history')">전체 이력</button>
   <button class="tab-btn" onclick="switchTab('tracking')">종목별 추적</button>
@@ -455,13 +453,12 @@ td { padding: 6px 10px; font-size: 13px; vertical-align: middle; }
   <button class="tab-btn" onclick="switchTab('lotto')">🎱 로또</button>
   <button class="tab-btn" onclick="switchTab('calendar')">📅 캘린더</button>
   <button class="tab-btn" onclick="switchTab('liquidity')">💧 유동성</button>
-  <button class="tab-btn" style="opacity:0.35;cursor:not-allowed" title="KRX API 차단으로 임시 비활성화">📉 공매도</button>
-  <button class="tab-btn" style="opacity:0.35;cursor:not-allowed" title="임시 비활성화">🧠 스마트머니</button>
   <button class="tab-btn" onclick="switchTab('blockdeals')">🕵️ 블록딜</button>
-  <button onclick="window.open('/game','_blank')"
-    style="padding:6px 14px;border-radius:6px;border:1px solid #7c3aed;background:linear-gradient(135deg,#1e1040,#2d1b69);color:#a78bfa;font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap;flex-shrink:0">
-    🧬 진화 게임
-  </button>
+  <button class="tab-btn" onclick="switchTab('etfflow')">🌊 ETF플로우</button>
+  <button class="tab-btn" disabled title="비활성화" style="opacity:0.35;cursor:not-allowed">⚔️ 전쟁지표</button>
+  <button class="tab-btn" disabled title="데이터 없음" style="opacity:0.35;cursor:not-allowed">📉 공매도</button>
+  <button class="tab-btn" disabled title="데이터 없음" style="opacity:0.35;cursor:not-allowed">🧠 스마트머니</button>
+  <button class="tab-btn" disabled title="일시 비활성화" style="opacity:0.35;cursor:not-allowed">📰 뉴스</button>
 </div>
 
 <!-- ────────────── 탭1: 오늘 스캔 ────────────── -->
@@ -652,7 +649,10 @@ td { padding: 6px 10px; font-size: 13px; vertical-align: middle; }
         <div style="font-size:13px;font-weight:700">📊 시장 방향 예측</div>
         <button onclick="showScoreCriteria()" style="background:none;border:1px solid var(--border);color:var(--text-muted);border-radius:50%;width:18px;height:18px;font-size:10px;cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0;flex-shrink:0" title="스코어 기준 보기">ⓘ</button>
       </div>
-      <div id="ind-score-label" style="font-size:11px;font-weight:700;padding:3px 10px;border-radius:10px;background:var(--border);white-space:nowrap">--</div>
+      <div style="display:flex;align-items:center;gap:6px">
+        <button onclick="showBacktestModal()" style="background:none;border:1px solid #7c83fd;color:#7c83fd;border-radius:6px;padding:3px 8px;font-size:10px;cursor:pointer;font-weight:600" title="2트랙 스코어 백테스트">백테스트</button>
+        <div id="ind-score-label" style="font-size:11px;font-weight:700;padding:3px 10px;border-radius:10px;background:var(--border);white-space:nowrap">--</div>
+      </div>
     </div>
     <!-- 수치 + 게이지 한 줄 -->
     <div style="display:grid;grid-template-columns:52px 1fr 52px;align-items:center;gap:10px">
@@ -678,16 +678,69 @@ td { padding: 6px 10px; font-size: 13px; vertical-align: middle; }
         <div style="font-size:9px;color:#f87171;margin-top:2px">💥 폭락</div>
       </div>
     </div>
+
+    <!-- 2트랙 스코어 바 -->
+    <div id="split-score-section" style="margin-top:10px;display:none">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">
+        <!-- 구조적 리스크 -->
+        <div>
+          <div style="display:flex;justify-content:space-between;font-size:10px;margin-bottom:3px">
+            <span style="color:#f87171;font-weight:600">구조적 리스크</span>
+            <span id="structural-score-num" style="color:#e2e8f0;font-weight:700">--</span>
+          </div>
+          <div style="position:relative;height:8px;background:var(--border);border-radius:4px;overflow:hidden">
+            <div id="structural-score-bar" style="height:100%;background:linear-gradient(to right,#4ade80,#fbbf24,#f87171);border-radius:4px;width:0%;transition:width .6s"></div>
+          </div>
+          <div style="display:flex;justify-content:space-between;font-size:8px;color:var(--text-muted);margin-top:2px">
+            <span>안정</span><span>위험</span>
+          </div>
+        </div>
+        <!-- 심리/모멘텀 -->
+        <div>
+          <div style="display:flex;justify-content:space-between;font-size:10px;margin-bottom:3px">
+            <span style="color:#fbbf24;font-weight:600">심리/모멘텀</span>
+            <span id="sentiment-score-num" style="color:#e2e8f0;font-weight:700">--</span>
+          </div>
+          <div style="position:relative;height:8px;background:var(--border);border-radius:4px;overflow:hidden">
+            <div id="sentiment-score-bar" style="height:100%;background:linear-gradient(to right,#4ade80,#fbbf24,#f87171);border-radius:4px;width:0%;transition:width .6s"></div>
+          </div>
+          <div style="display:flex;justify-content:space-between;font-size:8px;color:var(--text-muted);margin-top:2px">
+            <span>낙관</span><span>패닉</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- 2×2 매트릭스 -->
+      <div id="quadrant-matrix" style="display:grid;grid-template-columns:1fr 1fr;gap:4px;margin-top:4px">
+        <div id="q-normal" style="border:1px solid var(--border);border-radius:6px;padding:6px;text-align:center;font-size:10px;transition:all .3s">
+          <div style="font-size:9px;color:var(--text-muted);margin-bottom:2px">안정 + 낙관</div>
+          <div style="font-weight:700;color:#4ade80">정상 / 홀딩</div>
+        </div>
+        <div id="q-contrarian" style="border:1px solid var(--border);border-radius:6px;padding:6px;text-align:center;font-size:10px;transition:all .3s">
+          <div style="font-size:9px;color:var(--text-muted);margin-bottom:2px">안정 + 패닉</div>
+          <div style="font-weight:700;color:#60a5fa">역발상 매수</div>
+        </div>
+        <div id="q-danger" style="border:1px solid var(--border);border-radius:6px;padding:6px;text-align:center;font-size:10px;transition:all .3s">
+          <div style="font-size:9px;color:var(--text-muted);margin-bottom:2px">위험 + 낙관</div>
+          <div style="font-weight:700;color:#fb923c">가장 위험</div>
+        </div>
+        <div id="q-exit" style="border:1px solid var(--border);border-radius:6px;padding:6px;text-align:center;font-size:10px;transition:all .3s">
+          <div style="font-size:9px;color:var(--text-muted);margin-bottom:2px">위험 + 패닉</div>
+          <div style="font-weight:700;color:#f87171">손절 / 현금화</div>
+        </div>
+      </div>
+    </div>
+
     <!-- 복합 차트: 스코어 + 지수 오버랩 -->
     <div style="margin-top:10px">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
         <div style="font-size:10px;color:var(--text-muted)">30일 방향성 추이 + 지수 오버랩</div>
         <div style="display:flex;gap:8px;flex-wrap:wrap">
-          <span style="font-size:9px;color:#7c83fd">━ 스코어</span>
-          <span style="font-size:9px;color:#22d3ee">━ KOSPI</span>
-          <span style="font-size:9px;color:#4ade80">━ KOSDAQ</span>
-          <span style="font-size:9px;color:#f59e0b">━ NASDAQ</span>
-          <span style="font-size:9px;color:#f87171">━ DOW</span>
+          <span style="font-size:9px;font-weight:400;color:#7c83fd">━ 스코어</span>
+          <span style="font-size:9px;font-weight:400;color:#22d3ee">━ KOSPI</span>
+          <span style="font-size:9px;font-weight:400;color:#4ade80">━ KOSDAQ</span>
+          <span style="font-size:9px;font-weight:400;color:#f59e0b">━ NASDAQ</span>
+          <span style="font-size:9px;font-weight:400;color:#f87171">━ DOW</span>
         </div>
       </div>
       <div id="ind-score-spark" style="width:100%;overflow:hidden"></div>
@@ -1490,6 +1543,76 @@ td { padding: 6px 10px; font-size: 13px; vertical-align: middle; }
       style="background:var(--surface);border:1px solid var(--border);color:var(--text);padding:5px 12px;border-radius:6px;cursor:pointer;font-size:11px">🔄 새로고침</button>
   </div>
   <div id="sm-investors"></div>
+</div>
+
+<!-- ── ETF 플로우 탭 ──────────────────────────────────────────────── -->
+<div class="tab-panel" id="tab-etfflow" style="padding:14px 20px">
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;flex-wrap:wrap;gap:8px">
+    <div>
+      <span style="font-size:16px;font-weight:700">🌊 ETF 자금 플로우</span>
+      <span style="font-size:11px;color:var(--text-muted);margin-left:8px">ETF 설정/환매 × 편입비중 → 종목별 유입/유출액</span>
+    </div>
+    <div style="display:flex;gap:8px;align-items:center">
+      <span id="ef-updated" style="font-size:11px;color:var(--text-muted)"></span>
+      <button onclick="loadEtfFlows(true)"
+        style="background:var(--surface);border:1px solid var(--border);color:var(--text);padding:5px 12px;border-radius:6px;cursor:pointer;font-size:11px">🔄 새로고침</button>
+    </div>
+  </div>
+
+  <!-- 센티멘트 -->
+  <div id="ef-sentiment" style="margin-bottom:12px"></div>
+
+  <!-- 4방향 탭 필터 -->
+  <div style="display:flex;gap:4px;margin-bottom:12px;flex-wrap:wrap">
+    <button id="ef-tab-us_us" onclick="efSetMode('us_us')"
+      style="padding:5px 14px;border-radius:6px;border:1px solid var(--border);font-size:11px;font-weight:700;cursor:pointer;background:#1e40af;color:#93c5fd">
+      🇺🇸→🇺🇸 미국ETF→미국종목</button>
+    <button id="ef-tab-kr_kr" onclick="efSetMode('kr_kr')"
+      style="padding:5px 14px;border-radius:6px;border:1px solid var(--border);font-size:11px;font-weight:700;cursor:pointer;background:var(--surface);color:var(--text)">
+      🇰🇷→🇰🇷 한국ETF→한국종목</button>
+    <button id="ef-tab-us_kr" onclick="efSetMode('us_kr')"
+      style="padding:5px 14px;border-radius:6px;border:1px solid var(--border);font-size:11px;font-weight:700;cursor:pointer;background:var(--surface);color:var(--text)">
+      🇺🇸→🇰🇷 미국ETF→한국종목</button>
+    <button id="ef-tab-kr_us" onclick="efSetMode('kr_us')"
+      style="padding:5px 14px;border-radius:6px;border:1px solid var(--border);font-size:11px;font-weight:700;cursor:pointer;background:var(--surface);color:var(--text)">
+      🇰🇷→🇺🇸 한국ETF→미국종목</button>
+  </div>
+
+  <!-- 보조 컨트롤 -->
+  <div style="display:flex;gap:8px;margin-bottom:12px;align-items:center;flex-wrap:wrap">
+    <select id="ef-sort" onchange="renderEtfFlows()"
+      style="background:var(--surface);border:1px solid var(--border);color:var(--text);padding:4px 8px;border-radius:6px;font-size:12px">
+      <option value="inflow">유입 큰 순</option>
+      <option value="outflow">유출 큰 순</option>
+      <option value="abs">절대값 큰 순</option>
+    </select>
+    <input id="ef-search" oninput="renderEtfFlows()" placeholder="종목명·티커 검색..."
+      style="background:var(--surface);border:1px solid var(--border);color:var(--text);padding:4px 10px;border-radius:6px;font-size:12px;width:140px">
+    <label style="font-size:11px;color:var(--text-muted);display:flex;align-items:center;gap:4px;cursor:pointer">
+      <input type="checkbox" id="ef-show-chart" onchange="toggleEfChart()" style="cursor:pointer">
+      3개월 차트
+    </label>
+  </div>
+
+  <!-- 차트 영역 (토글) -->
+  <div id="ef-chart-area" style="display:none;margin-bottom:16px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:12px">
+    <div style="font-size:11px;color:var(--text-muted);margin-bottom:6px">
+      종목 행을 클릭하면 해당 종목의 3개월 추이를 표시합니다
+    </div>
+    <div id="ef-chart-title" style="font-size:13px;font-weight:700;margin-bottom:8px"></div>
+    <svg id="ef-chart-svg" width="100%" height="140" style="display:block"></svg>
+  </div>
+
+  <div id="ef-content"></div>
+</div>
+
+<!-- ETF 상세 모달 -->
+<div id="ef-detail-modal" style="display:none;position:fixed;inset:0;background:#000a;z-index:9999;align-items:center;justify-content:center">
+  <div style="background:var(--bg);border:1px solid var(--border);border-radius:10px;max-width:700px;width:95%;max-height:85vh;overflow-y:auto;padding:20px;position:relative">
+    <button onclick="document.getElementById('ef-detail-modal').style.display='none'"
+      style="position:absolute;top:12px;right:12px;background:none;border:none;color:var(--text);font-size:18px;cursor:pointer">✕</button>
+    <div id="ef-detail-content"></div>
+  </div>
 </div>
 
 <!-- ── 블록딜 추적 탭 ──────────────────────────────────────────────── -->
@@ -2523,7 +2646,7 @@ function escHtml(str) {
 
 // ── 탭 전환 ──────────────────────────────────────────────────────────
 
-const TAB_NAMES = ['today','indicators','future','war','news','milestone','history','tracking','algotrack','plus1','plus2','algo','lotto','calendar','liquidity','shorting','smartmoney','blockdeals'];
+const TAB_NAMES = ['today','indicators','future','milestone','history','tracking','algotrack','plus1','plus2','algo','lotto','calendar','liquidity','blockdeals','etfflow','war','shorting','smartmoney','news'];
 const tabLoaded = {};
 
 function switchTab(name) {
@@ -2555,6 +2678,7 @@ function switchTab(name) {
     if (name === 'shorting')   loadShortRadar();
     if (name === 'smartmoney') loadSmartMoney();
     if (name === 'blockdeals') loadBlockDeals();
+    if (name === 'etfflow')   loadEtfFlows();
   } else if (name === 'indicators') {
     // 다시 돌아올 때 실시간 재시작
     fetchRealtime();
@@ -4350,6 +4474,261 @@ function calcCrashScore(data) {
   return Math.round(50 - (wsum / wmax) * 50);
 }
 
+// ── 2트랙 스플릿 스코어 ──────────────────────────────────────────
+// 구조적 리스크: t10y2y(yield_curve), hy_spread, rrp, mmf_total(mmf_total)
+// 심리/모멘텀: vix, fear_greed, nasdaq, usd_krw
+const STRUCTURAL_WEIGHTS = {
+  'yield_curve': { w: 0.30, desc: '장단기금리차' },
+  'hy_spread':   { w: 0.35, desc: 'HY 크레딧스프레드' },
+  'rrp':         { w: 0.15, desc: '역레포 잔고' },
+  'mmf_total':   { w: 0.20, desc: 'MMF 잔고' },
+};
+const SENTIMENT_WEIGHTS = {
+  'vix':        { w: 0.30, desc: 'VIX 변동성' },
+  'fear_greed': { w: 0.25, desc: '공포탐욕지수' },
+  'nasdaq':     { w: 0.25, desc: '나스닥 모멘텀' },
+  'usd_krw':    { w: 0.20, desc: '원달러 환율' },
+};
+// 0(최상)~100(위험) 범위 변환
+const SPLIT_STATUS_SCORE = { '최상': 0, '긍정': 15, '관망': 35, '경고': 65, '위험': 90 };
+
+function _calcTrackScore(data, weightsMap) {
+  let wsum = 0, wmax = 0;
+  for (const [key, cfg] of Object.entries(weightsMap)) {
+    const def  = IND_DEFS.find(d => d.key === key);
+    const item = data?.[key];
+    if (!item && !def) { wmax += cfg.w; continue; }
+    const st = (item?.status) || (def && def.type === 'numeric' ? autoStatus(def, item?.value) : null);
+    if (!st || SPLIT_STATUS_SCORE[st] == null) { wmax += cfg.w; continue; }
+    wsum += SPLIT_STATUS_SCORE[st] * cfg.w;
+    wmax += cfg.w;
+  }
+  if (!wmax) return 50;
+  return Math.round(wsum / wmax);
+}
+
+function calcSplitScore(data) {
+  return {
+    structural: _calcTrackScore(data, STRUCTURAL_WEIGHTS),
+    sentiment:  _calcTrackScore(data, SENTIMENT_WEIGHTS),
+  };
+}
+
+// 구조: <55 = 안정, >=55 = 위험 / 심리: <55 = 낙관, >=55 = 패닉
+// 반환: 'normal' | 'contrarian' | 'danger' | 'exit'
+function getQuadrant(structural, sentiment) {
+  const structRisk = structural >= 55;
+  const sentPanic  = sentiment  >= 55;
+  if (!structRisk && !sentPanic) return 'normal';      // 안정+낙관 → 정상/홀딩
+  if (!structRisk &&  sentPanic) return 'contrarian';  // 안정+패닉 → 역발상매수
+  if ( structRisk && !sentPanic) return 'danger';      // 위험+낙관 → 가장위험
+  return 'exit';                                        // 위험+패닉 → 손절/현금화
+}
+
+function _updateSplitScoreUI(structural, sentiment) {
+  const sec = document.getElementById('split-score-section');
+  if (sec) sec.style.display = '';
+
+  const sn = document.getElementById('structural-score-num');
+  const sb = document.getElementById('structural-score-bar');
+  const mn = document.getElementById('sentiment-score-num');
+  const mb = document.getElementById('sentiment-score-bar');
+  if (sn) sn.textContent = structural;
+  if (sb) sb.style.width = structural + '%';
+  if (mn) mn.textContent = sentiment;
+  if (mb) mb.style.width = sentiment + '%';
+
+  // 사분면 하이라이트
+  const qMap = { normal:'q-normal', contrarian:'q-contrarian', danger:'q-danger', exit:'q-exit' };
+  const active = getQuadrant(structural, sentiment);
+  const highlightStyles = {
+    normal:      'background:#14532d33;border-color:#4ade80;box-shadow:0 0 6px #4ade8066',
+    contrarian:  'background:#1e3a5f33;border-color:#60a5fa;box-shadow:0 0 6px #60a5fa66',
+    danger:      'background:#431407aa;border-color:#fb923c;box-shadow:0 0 6px #fb923c99',
+    exit:        'background:#450a0aaa;border-color:#f87171;box-shadow:0 0 6px #f8717199',
+  };
+  for (const [q, id] of Object.entries(qMap)) {
+    const el = document.getElementById(id);
+    if (!el) continue;
+    if (q === active) {
+      el.style.cssText += ';' + highlightStyles[q];
+    } else {
+      el.style.background = '';
+      el.style.borderColor = 'var(--border)';
+      el.style.boxShadow = '';
+    }
+  }
+}
+
+// ── 백테스트 ────────────────────────────────────────────────────
+function runBacktest(history) {
+  // history: [{date, data, crash_score?}] 날짜 내림차순
+  // 오래된→최신 정렬로 변환
+  const sorted = [...history].reverse(); // 오래된→최신
+  const results = [];
+
+  for (let i = 0; i < sorted.length; i++) {
+    const h = sorted[i];
+    if (!h.data) continue;
+    const { structural, sentiment } = calcSplitScore(h.data);
+    const quadrant = getQuadrant(structural, sentiment);
+
+    // NASDAQ value
+    const nasdaqItem = h.data?.nasdaq;
+    const nasdaqVal = nasdaqItem?.value != null ? parseFloat(nasdaqItem.value) : null;
+
+    // 5일/20일 후 NASDAQ 수익률
+    const fwd5  = (i + 5  < sorted.length) ? sorted[i + 5 ].data?.nasdaq?.value : null;
+    const fwd20 = (i + 20 < sorted.length) ? sorted[i + 20].data?.nasdaq?.value : null;
+    const ret5  = (nasdaqVal && fwd5  != null) ? ((parseFloat(fwd5)  / nasdaqVal - 1) * 100) : null;
+    const ret20 = (nasdaqVal && fwd20 != null) ? ((parseFloat(fwd20) / nasdaqVal - 1) * 100) : null;
+
+    results.push({ date: h.date, structural, sentiment, quadrant, ret5, ret20, nasdaqVal });
+  }
+  return results;
+}
+
+function _backtestQuadrantStats(results) {
+  const quads = ['normal','contrarian','danger','exit'];
+  const names = { normal:'정상/홀딩', contrarian:'역발상 매수', danger:'가장 위험', exit:'손절/현금화' };
+  const stats  = {};
+  for (const q of quads) {
+    const rows = results.filter(r => r.quadrant === q);
+    const r5s  = rows.map(r => r.ret5 ).filter(v => v != null);
+    const r20s = rows.map(r => r.ret20).filter(v => v != null);
+    stats[q] = {
+      name: names[q],
+      count: rows.length,
+      avg5:  r5s.length  ? (r5s.reduce((a,b)=>a+b,0)/r5s.length).toFixed(2)  : null,
+      avg20: r20s.length ? (r20s.reduce((a,b)=>a+b,0)/r20s.length).toFixed(2) : null,
+    };
+  }
+  return stats;
+}
+
+async function showBacktestModal() {
+  // 모달 생성
+  const overlay = document.createElement('div');
+  overlay.className = 'ind-tooltip-overlay';
+  overlay.style.cssText = 'z-index:9999';
+  overlay.innerHTML = `<div class="ind-tooltip-box" style="max-width:580px;width:95vw;max-height:88vh;overflow-y:auto">
+    <div style="font-size:15px;font-weight:700;margin-bottom:4px">백테스트 — 2트랙 스코어</div>
+    <div id="bt-loading" style="text-align:center;padding:30px;color:var(--text-muted)">데이터 로딩 중...</div>
+    <div id="bt-content" style="display:none"></div>
+    <button onclick="this.closest('.ind-tooltip-overlay').remove()" style="margin-top:14px;width:100%;padding:10px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:14px;cursor:pointer">닫기</button>
+  </div>`;
+  overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+  document.body.appendChild(overlay);
+
+  // 180일 히스토리 로드
+  let history = _indHistory || [];
+  try {
+    const r = await fetch('/api/daily-indicators?days=180');
+    history = await r.json();
+  } catch(e) { /* 기존 _indHistory 사용 */ }
+
+  const loadEl = document.getElementById('bt-loading');
+  const contEl = document.getElementById('bt-content');
+
+  if (!history || history.length < 5) {
+    if (loadEl) loadEl.textContent = '데이터 부족 (최소 5일 필요)';
+    return;
+  }
+
+  const results = runBacktest(history);
+  const stats   = _backtestQuadrantStats(results);
+  const curQ    = results.length ? results[results.length-1].quadrant : null;
+
+  // 통계 테이블
+  const QUAD_COLORS = { normal:'#4ade80', contrarian:'#60a5fa', danger:'#fb923c', exit:'#f87171' };
+  const statRows = ['normal','contrarian','danger','exit'].map(q => {
+    const s = stats[q];
+    const isCur = q === curQ;
+    const bg = isCur ? `background:${QUAD_COLORS[q]}22;` : '';
+    const r5color  = s.avg5  == null ? '#888' : (parseFloat(s.avg5)  >= 0 ? '#4ade80' : '#f87171');
+    const r20color = s.avg20 == null ? '#888' : (parseFloat(s.avg20) >= 0 ? '#4ade80' : '#f87171');
+    const cur = isCur ? ' ◀ 현재' : '';
+    return `<tr style="${bg}">
+      <td style="padding:6px 8px;color:${QUAD_COLORS[q]};font-weight:${isCur?'700':'400'}">${s.name}${cur}</td>
+      <td style="padding:6px 8px;text-align:center">${s.count}일</td>
+      <td style="padding:6px 8px;text-align:center;color:${r5color}">${s.avg5 != null ? (parseFloat(s.avg5)>=0?'+':'')+s.avg5+'%' : '-'}</td>
+      <td style="padding:6px 8px;text-align:center;color:${r20color}">${s.avg20 != null ? (parseFloat(s.avg20)>=0?'+':'')+s.avg20+'%' : '-'}</td>
+    </tr>`;
+  }).join('');
+
+  // 타임라인 (최근 30개, 사분면 변화 강조)
+  const recent = results.slice(-30).reverse();
+  let prevQ = null;
+  const timelineRows = recent.map(r => {
+    const changed = r.quadrant !== prevQ;
+    prevQ = r.quadrant;
+    const bg = changed ? `background:${QUAD_COLORS[r.quadrant]}11;` : '';
+    const tag = changed ? '▶' : '　';
+    const r5str  = r.ret5  != null ? (r.ret5 >=0?'+':'')+r.ret5.toFixed(1)+'%'  : '-';
+    const r5col  = r.ret5  != null ? (r.ret5 >=0?'#4ade80':'#f87171') : '#888';
+    const nameMap = { normal:'정상/홀딩', contrarian:'역발상매수', danger:'가장위험', exit:'손절/현금화' };
+    return `<tr style="${bg}">
+      <td style="padding:3px 6px;font-size:10px;color:var(--text-muted)">${r.date}</td>
+      <td style="padding:3px 6px;font-size:10px;text-align:center">${r.structural}</td>
+      <td style="padding:3px 6px;font-size:10px;text-align:center">${r.sentiment}</td>
+      <td style="padding:3px 6px;font-size:10px;color:${QUAD_COLORS[r.quadrant]}">${tag} ${nameMap[r.quadrant]}</td>
+      <td style="padding:3px 6px;font-size:10px;text-align:center;color:${r5col}">${r5str}</td>
+    </tr>`;
+  }).join('');
+
+  // 주요 통계 (구조적 경고 >=55 vs 안전 구간 비교)
+  const dangerRows = results.filter(r => r.structural >= 55 && r.ret20 != null);
+  const safeRows   = results.filter(r => r.structural < 55  && r.ret20 != null);
+  const dangerAvg  = dangerRows.length ? (dangerRows.reduce((a,b)=>a+b.ret20,0)/dangerRows.length).toFixed(2) : null;
+  const safeAvg    = safeRows.length   ? (safeRows.reduce((a,b)=>a+b.ret20,0)/safeRows.length).toFixed(2)   : null;
+  const totalSignals = results.length;
+  const period = results.length ? `${results[0].date} ~ ${results[results.length-1].date}` : '-';
+
+  contEl.innerHTML = `
+    <div style="font-size:11px;color:var(--text-muted);margin-bottom:10px">기간: ${period} (${totalSignals}일)</div>
+
+    <div style="font-size:12px;font-weight:700;color:#7c83fd;margin-bottom:6px">사분면별 NASDAQ 수익률 통계</div>
+    <div style="overflow-x:auto;margin-bottom:14px">
+      <table style="width:100%;border-collapse:collapse;font-size:11px">
+        <thead>
+          <tr style="border-bottom:1px solid var(--border);color:var(--text-muted)">
+            <th style="padding:6px 8px;text-align:left">사분면</th>
+            <th style="padding:6px 8px;text-align:center">일수</th>
+            <th style="padding:6px 8px;text-align:center">5일 평균</th>
+            <th style="padding:6px 8px;text-align:center">20일 평균</th>
+          </tr>
+        </thead>
+        <tbody>${statRows}</tbody>
+      </table>
+    </div>
+
+    <div style="font-size:12px;font-weight:700;color:#7c83fd;margin-bottom:6px">주요 통계</div>
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px;margin-bottom:14px;font-size:11px;line-height:1.8">
+      구조적 위험(≥55) ${dangerRows.length}일 — 20일 평균: <b style="color:${dangerAvg!=null&&parseFloat(dangerAvg)>=0?'#4ade80':'#f87171'}">${dangerAvg!=null?(parseFloat(dangerAvg)>=0?'+':'')+dangerAvg+'%':'-'}</b><br>
+      구조적 안전(&lt;55) ${safeRows.length}일 — 20일 평균: <b style="color:${safeAvg!=null&&parseFloat(safeAvg)>=0?'#4ade80':'#f87171'}">${safeAvg!=null?(parseFloat(safeAvg)>=0?'+':'')+safeAvg+'%':'-'}</b>
+    </div>
+
+    <div style="font-size:12px;font-weight:700;color:#7c83fd;margin-bottom:6px">신호 타임라인 (최근 30일)</div>
+    <div style="overflow-x:auto">
+      <table style="width:100%;border-collapse:collapse;font-size:10px">
+        <thead>
+          <tr style="border-bottom:1px solid var(--border);color:var(--text-muted)">
+            <th style="padding:3px 6px;text-align:left">날짜</th>
+            <th style="padding:3px 6px;text-align:center">구조</th>
+            <th style="padding:3px 6px;text-align:center">심리</th>
+            <th style="padding:3px 6px;text-align:left">사분면</th>
+            <th style="padding:3px 6px;text-align:center">5일 수익</th>
+          </tr>
+        </thead>
+        <tbody>${timelineRows}</tbody>
+      </table>
+    </div>
+  `;
+
+  if (loadEl) loadEl.style.display = 'none';
+  if (contEl) contEl.style.display = '';
+}
+
 // ── SVG 스파크라인 ──────────────────────────────────────────────
 function svgNumericSpark(points, w, h, color) {
   if (!points || points.length < 2) return '<span style="font-size:10px;color:var(--text-muted)">데이터 없음</span>';
@@ -4483,7 +4862,7 @@ function svgScoreSpark(points, w, h, indices) {
   const last = points[points.length - 1];
   const lx = xOf(points.length - 1, points.length);
   const ly = yOf(last.v);
-  const lc = last.v > 55 ? '#f87171' : last.v < 45 ? '#4ade80' : '#fbbf24';
+  const lc = '#7c83fd';  // 스코어 라인 고정 파란색 (범례와 동일)
 
   const linePts = points.map((p,i) => `${xOf(i, points.length).toFixed(1)},${yOf(p.v).toFixed(1)}`).join(' ');
   const fillPoly = [
@@ -4491,7 +4870,7 @@ function svgScoreSpark(points, w, h, indices) {
     ...points.map((p,i) => `${xOf(i, points.length).toFixed(1)},${yOf(p.v).toFixed(1)}`),
     `${xOf(points.length-1, points.length).toFixed(1)},${cy50.toFixed(1)}`,
   ].join(' ');
-  const fillColor = last.v > 50 ? '#f87171' : '#4ade80';
+  const fillColor = last.v > 50 ? '#4ade80' : '#f87171';
 
   // 최고/최저 포인트 위치
   const maxIdx = vals.indexOf(Math.max(...vals));
@@ -4516,14 +4895,14 @@ function svgScoreSpark(points, w, h, indices) {
     const xByDate = d => pad.l + (new Date(d) - new Date(startD)) / 86400000 / totalDays * cw;
     const pts = filtered.map(p => `${xByDate(p.d).toFixed(1)},${yOf(norm(p.v)).toFixed(1)}`).join(' ');
     const lp = filtered[filtered.length - 1];
-    return `<polyline points="${pts}" fill="none" stroke="${color}" stroke-width="1.2" stroke-linejoin="round" opacity="${opacity}"/>
-            <circle cx="${xByDate(lp.d).toFixed(1)}" cy="${yOf(norm(lp.v)).toFixed(1)}" r="2" fill="${color}"/>`;
+    return `<polyline points="${pts}" fill="none" stroke="${color}" stroke-width="1.0" stroke-linejoin="round" opacity="0.35"/>
+            <circle cx="${xByDate(lp.d).toFixed(1)}" cy="${yOf(norm(lp.v)).toFixed(1)}" r="1.5" fill="${color}" opacity="0.5"/>`;
   }
 
   // y축 레이블 (최대/최소/중립)
   const yAxisLabels = [
-    `<text x="${pad.l-3}" y="${(pad.t+4).toFixed(1)}" text-anchor="end" font-size="8" font-weight="700" fill="#f87171">${dataMax}</text>`,
-    `<text x="${pad.l-3}" y="${(pad.t+ch+3).toFixed(1)}" text-anchor="end" font-size="8" font-weight="700" fill="#4ade80">${dataMin}</text>`,
+    `<text x="${pad.l-3}" y="${(pad.t+4).toFixed(1)}" text-anchor="end" font-size="8" font-weight="700" fill="#4ade80">${dataMax}</text>`,
+    `<text x="${pad.l-3}" y="${(pad.t+ch+3).toFixed(1)}" text-anchor="end" font-size="8" font-weight="700" fill="#f87171">${dataMin}</text>`,
     (dataMin < 50 && 50 < dataMax)
       ? `<text x="${pad.l-3}" y="${(cy50+3).toFixed(1)}" text-anchor="end" font-size="7" fill="#44475a">50</text>`
       : '',
@@ -4531,10 +4910,10 @@ function svgScoreSpark(points, w, h, indices) {
 
   // 최고/최저 마커
   const peakLabels = [
-    `<circle cx="${maxX.toFixed(1)}" cy="${maxY.toFixed(1)}" r="3" fill="#f87171" opacity="0.8"/>`,
-    `<text x="${maxX.toFixed(1)}" y="${(maxY-5).toFixed(1)}" text-anchor="middle" font-size="8" font-weight="700" fill="#f87171">${vals[maxIdx].toFixed(0)}</text>`,
-    `<circle cx="${minX.toFixed(1)}" cy="${minY.toFixed(1)}" r="3" fill="#4ade80" opacity="0.8"/>`,
-    `<text x="${minX.toFixed(1)}" y="${(minY+11).toFixed(1)}" text-anchor="middle" font-size="8" font-weight="700" fill="#4ade80">${vals[minIdx].toFixed(0)}</text>`,
+    `<circle cx="${maxX.toFixed(1)}" cy="${maxY.toFixed(1)}" r="3" fill="#4ade80" opacity="0.8"/>`,
+    `<text x="${maxX.toFixed(1)}" y="${(maxY-5).toFixed(1)}" text-anchor="middle" font-size="8" font-weight="700" fill="#4ade80">${vals[maxIdx].toFixed(0)}</text>`,
+    `<circle cx="${minX.toFixed(1)}" cy="${minY.toFixed(1)}" r="3" fill="#f87171" opacity="0.8"/>`,
+    `<text x="${minX.toFixed(1)}" y="${(minY+11).toFixed(1)}" text-anchor="middle" font-size="8" font-weight="700" fill="#f87171">${vals[minIdx].toFixed(0)}</text>`,
   ].join('');
 
   const xLabels = [
@@ -4547,15 +4926,16 @@ function svgScoreSpark(points, w, h, indices) {
   return `<svg width="${w}" height="${h+10}" style="display:block;overflow:visible">
     ${show50 ? `<rect x="${pad.l}" y="${cy50.toFixed(1)}" width="${cw}" height="${(pad.t+ch-cy50).toFixed(1)}" fill="#2d1a1a" opacity="0.4"/>` : ''}
     ${show50 ? `<rect x="${pad.l}" y="${pad.t}" width="${cw}" height="${(cy50-pad.t).toFixed(1)}" fill="#1a2d1a" opacity="0.4"/>` : ''}
+    <!-- 위=폭등(초록), 아래=폭락(빨강) -->
     ${show50 ? `<line x1="${pad.l}" y1="${cy50.toFixed(1)}" x2="${pad.l+cw}" y2="${cy50.toFixed(1)}" stroke="#44475a" stroke-width="1" stroke-dasharray="3,3"/>` : ''}
     ${yAxisLabels}
     ${indexLine(idx.kospi,  '#22d3ee', '0.7')}
     ${indexLine(idx.kosdaq, '#4ade80', '0.7')}
     ${indexLine(idx.nasdaq, '#f59e0b', '0.7')}
     ${indexLine(idx.dow,    '#f87171', '0.7')}
-    <polygon points="${fillPoly}" fill="${fillColor}" opacity="0.2"/>
-    <polyline points="${linePts}" fill="none" stroke="${lc}" stroke-width="3" stroke-linejoin="round" opacity="0.2"/>
-    <polyline points="${linePts}" fill="none" stroke="${lc}" stroke-width="1.5" stroke-linejoin="round"/>
+    <polygon points="${fillPoly}" fill="${fillColor}" opacity="0.15"/>
+    <polyline points="${linePts}" fill="none" stroke="${lc}" stroke-width="6" stroke-linejoin="round" opacity="0.15"/>
+    <polyline points="${linePts}" fill="none" stroke="${lc}" stroke-width="2.5" stroke-linejoin="round"/>
     ${peakLabels}
     <circle cx="${lx.toFixed(1)}" cy="${ly.toFixed(1)}" r="5" fill="${lc}" opacity="0.3"/>
     <circle cx="${lx.toFixed(1)}" cy="${ly.toFixed(1)}" r="3.5" fill="${lc}"/>
@@ -4658,10 +5038,19 @@ function renderIndicators() {
     surgeNumEl.textContent = '--'; crashNumEl.textContent = '--';
     surgeBarEl.style.width = '0%'; crashBarEl.style.width = '0%';
     labelEl.textContent = '--'; labelEl.style.background = 'var(--border)';
+    // 2트랙 스코어 숨기기
+    const splitSec = document.getElementById('split-score-section');
+    if (splitSec) splitSec.style.display = 'none';
+  }
+
+  // 2트랙 스플릿 스코어 업데이트
+  if (cur) {
+    const split = calcSplitScore(data);
+    _updateSplitScoreUI(split.structural, split.sentiment);
   }
 
   // 30일 방향성 추이 스파크 + 지수 오버랩
-  const scorePts = [..._indHistory].reverse().map(h => ({ d: h.date, v: h.crash_score ?? calcCrashScore(h.data) }));
+  const scorePts = [..._indHistory].reverse().map(h => ({ d: h.date, v: 100 - (h.crash_score ?? calcCrashScore(h.data)) }));
   const sparkEl = document.getElementById('ind-score-spark');
   const sparkW = sparkEl.offsetWidth || 300;
   sparkEl.innerHTML = svgScoreSpark(scorePts.length >= 2 ? scorePts : null, sparkW, 90, window._indexHistory || null);
@@ -7014,8 +7403,8 @@ function renderBlockDeals() {
       : '';
 
     const tickerHtml = t.ticker
-      ? `<a href="https://finance.yahoo.com/quote/${encodeURIComponent(t.ticker)}" target="_blank"
-           style="color:var(--accent2);font-weight:700;text-decoration:none">${escHtml(t.ticker)}</a>`
+      ? `<div><a href="https://finance.yahoo.com/quote/${encodeURIComponent(t.ticker)}" target="_blank"
+           style="color:var(--accent2);font-weight:700;text-decoration:none">${escHtml(t.ticker)}</a>${t.company_name ? `<div style="font-size:10px;color:var(--text-muted);margin-top:1px;max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHtml(t.company_name)}</div>` : ''}</div>`
       : `<span style="color:var(--text-muted);font-size:11px">${escHtml(t.asset_description || '—').slice(0,30)}</span>`;
 
     const linkHtml = t.link
@@ -7041,6 +7430,284 @@ function renderBlockDeals() {
   }).join('');
 
   document.getElementById('bd-count').textContent = `${trades.length}건 표시 중 (최대 300)`;
+}
+
+
+// ── ETF 플로우 ──────────────────────────────────────────────────────
+
+let _efData = null;
+let _efHistory = null;
+let _efMode = 'us_us';
+
+function efSetMode(mode) {
+  _efMode = mode;
+  ['us_us','kr_kr','us_kr','kr_us'].forEach(m => {
+    const btn = document.getElementById('ef-tab-' + m);
+    if (!btn) return;
+    if (m === mode) {
+      btn.style.background = '#1e40af'; btn.style.color = '#93c5fd';
+    } else {
+      btn.style.background = 'var(--surface)'; btn.style.color = 'var(--text)';
+    }
+  });
+  // 차트 숨기기
+  const ca = document.getElementById('ef-chart-area');
+  if (ca) ca.style.display = 'none';
+  renderEtfFlows();
+}
+
+function toggleEfChart() {
+  const ca = document.getElementById('ef-chart-area');
+  if (ca) ca.style.display = ca.style.display === 'none' ? 'block' : 'none';
+}
+
+async function loadEtfFlows(force = false) {
+  const el = document.getElementById('ef-content');
+  if (!force && _efData) { renderEtfFlows(); return; }
+  el.innerHTML = '<div style="color:var(--text-muted);font-size:12px;padding:20px;text-align:center">로딩 중...</div>';
+  try {
+    const [r1, r2] = await Promise.all([
+      fetch('/api/etf-flows').then(r => r.json()),
+      fetch('/api/etf-flows/history?days=90').then(r => r.json()).catch(() => ({ok:false}))
+    ]);
+    if (!r1.ok || !r1.data) {
+      el.innerHTML = '<div style="color:var(--text-muted);font-size:12px;padding:20px;text-align:center">데이터 없음 — 매일 06:30에 자동 수집됩니다</div>';
+      return;
+    }
+    _efData = r1.data;
+    _efUsdKrw = r1.usd_krw || 1420;
+    _efHistory = r2.ok ? (r2.history || []) : [];
+    const upd = document.getElementById('ef-updated');
+    if (upd) upd.textContent = _efData.updated_at ? _efData.updated_at.slice(0,16) : '';
+
+    // 삼성전자 / SK하이닉스 장시작 영향 카드
+    const sentEl = document.getElementById('ef-sentiment');
+    if (sentEl) {
+      const sig = _efData.kr_open_signal || {};
+      const fmtPct = p => (p >= 0 ? '+' : '') + p.toFixed(2) + '%';
+      const cards = Object.entries(sig).map(([ticker, s]) => {
+        const pct = s.expected_pct || 0;
+        const col = pct > 0 ? 'var(--green)' : pct < 0 ? 'var(--red)' : 'var(--text-muted)';
+        const etfTags = (s.signals || []).map(e =>
+          `<span style="font-size:10px;background:var(--surface2,#1e293b);border-radius:3px;padding:1px 5px">${escHtml(e.etf)} ${e.return_pct>=0?'+':''}${e.return_pct.toFixed(2)}%</span>`
+        ).join(' ');
+        return `<div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:8px 14px">
+          <div style="font-size:11px;color:var(--text-muted);margin-bottom:4px">${escHtml(s.name)} (${escHtml(ticker)}) 장시작 예상 영향</div>
+          <div style="font-size:18px;font-weight:700;color:${col};margin-bottom:4px">${fmtPct(pct)}</div>
+          <div style="display:flex;gap:4px;flex-wrap:wrap">${etfTags}</div>
+        </div>`;
+      }).join('');
+      if (cards) {
+        sentEl.innerHTML = `<div style="display:flex;gap:8px;flex-wrap:wrap">${cards}</div>`;
+      } else {
+        sentEl.innerHTML = '<div style="font-size:11px;color:var(--text-muted)">장시작 신호 없음 (전일 데이터 필요)</div>';
+      }
+    }
+    efSetMode(_efMode);
+  } catch(e) {
+    el.innerHTML = `<div style="color:var(--red);font-size:12px;padding:20px">${e}</div>`;
+  }
+}
+
+function _fmtFlow(v, currency) {
+  // 모두 억원(KRW) 단위로 통일 표시
+  const krw = currency === 'USD' ? v * _efUsdKrw : v;
+  const abs = Math.abs(krw);
+  const sign = krw >= 0 ? '+' : '-';
+  const uk = abs / 1e8; // 억원 단위
+  if (uk >= 10000) return `${sign}${(uk/10000).toFixed(1)}조원`;
+  if (uk >= 1)     return `${sign}${uk.toFixed(0)}억원`;
+  const man = abs / 1e4;
+  if (man >= 1)    return `${sign}${man.toFixed(0)}만원`;
+  return `${sign}${krw.toFixed(0)}원`;
+}
+
+let _efUsdKrw = 1420;
+let _efChartTicker = null;
+function _drawEfHistoryChart(ticker, mode) {
+  if (!_efHistory || !_efHistory.length) return;
+  _efChartTicker = ticker + '|' + mode;
+
+  const impKey = 'imp_' + mode;
+  const points = _efHistory.map(row => {
+    const arr = row[impKey] || [];
+    const item = arr.find(x => x.ticker === ticker);
+    return { date: row.date, flow: item ? item.total_flow : 0 };
+  }).filter(p => p.date).sort((a,b) => a.date.localeCompare(b.date));
+
+  const ca = document.getElementById('ef-chart-area');
+  const svg = document.getElementById('ef-chart-svg');
+  if (!ca || !svg) return;
+
+  // 차트 영역 표시 + 제목 즉시 업데이트
+  ca.style.display = 'block';
+  const titleEl = document.getElementById('ef-chart-title');
+  if (titleEl) titleEl.textContent = `${ticker} — 3개월 ETF 유입 추이`;
+
+  // 레이아웃 후 SVG 렌더링
+  requestAnimationFrame(() => {
+
+  const W = ca.clientWidth || 600, H = 150, pad = { l:52, r:12, t:22, b:28 };
+  const innerW = W - pad.l - pad.r, innerH = H - pad.t - pad.b;
+  if (!points.length) { svg.innerHTML = ''; return; }
+
+  const maxAbs = Math.max(...points.map(p => Math.abs(p.flow)), 1);
+  const midY = pad.t + innerH / 2;
+  const xs = points.map((_, i) => pad.l + (points.length > 1 ? i / (points.length - 1) : 0.5) * innerW);
+
+  const currency = (mode === 'us_us' || mode === 'us_kr') ? 'USD' : 'KRW';
+  const fmt = v => _fmtFlow(v, currency);
+
+  const barW = Math.max(2, Math.floor(innerW / points.length * 0.72));
+
+  // 바 + 투명 호버 영역 (전체 높이 rect → tooltip)
+  const bars = points.map((p, i) => {
+    const x   = xs[i] - barW / 2;
+    const barH = Math.max(1, Math.abs(p.flow) / maxAbs * innerH / 2);
+    const y   = p.flow >= 0 ? midY - barH : midY;
+    const col  = p.flow >= 0 ? '#16a34a' : '#dc2626';
+    const tip  = `${p.date}  ${fmt(p.flow)}`;
+    return `<g>
+      <rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${barW}" height="${barH.toFixed(1)}" fill="${col}" opacity="0.75"/>
+      <rect x="${(xs[i] - barW).toFixed(1)}" y="${pad.t}" width="${(barW*2).toFixed(0)}" height="${innerH}" fill="transparent" style="cursor:crosshair">
+        <title>${tip}</title>
+      </rect>
+    </g>`;
+  }).join('');
+
+  // x축 레이블
+  const step = Math.max(1, Math.floor(points.length / 6));
+  const xLabels = points
+    .filter((_, i) => i % step === 0 || i === points.length - 1)
+    .map(p => {
+      const i = points.indexOf(p);
+      return `<text x="${xs[i].toFixed(1)}" y="${(H - 4).toFixed(1)}" font-size="9" fill="var(--text-muted)" text-anchor="middle">${p.date.slice(5)}</text>`;
+    }).join('');
+
+  // y축 레이블
+  const yLabels = `
+    <text x="${pad.l - 4}" y="${(pad.t + 6).toFixed(1)}" font-size="9" fill="var(--green)" text-anchor="end">${fmt(maxAbs)}</text>
+    <text x="${pad.l - 4}" y="${(H - pad.b + 6).toFixed(1)}" font-size="9" fill="var(--red)" text-anchor="end">${fmt(-maxAbs)}</text>
+    <text x="${pad.l - 4}" y="${(midY + 3).toFixed(1)}" font-size="9" fill="var(--text-muted)" text-anchor="end">0</text>`;
+
+    svg.setAttribute('width', W);
+    svg.setAttribute('height', H);
+    svg.innerHTML = `
+      <line x1="${pad.l}" y1="${midY.toFixed(1)}" x2="${W - pad.r}" y2="${midY.toFixed(1)}" stroke="var(--border)" stroke-width="1"/>
+      ${bars}
+      ${xLabels}
+      ${yLabels}`;
+  }); // end requestAnimationFrame
+}
+
+function _openEfDetail(ticker, mode) {
+  if (!_efHistory || !_efHistory.length) return;
+  const impKey = 'imp_' + mode;
+  const currency = (mode === 'us_us' || mode === 'us_kr') ? 'USD' : 'KRW';
+  const rows = _efHistory.map(row => {
+    const arr = row[impKey] || [];
+    const item = arr.find(x => x.ticker === ticker);
+    return { date: row.date, flow: item ? item.total_flow : null, byEtf: item ? (item.by_etf || []) : [] };
+  }).filter(r => r.date).sort((a,b) => b.date.localeCompare(a.date));
+
+  const modal = document.getElementById('ef-detail-modal');
+  const content = document.getElementById('ef-detail-content');
+  if (!modal || !content) return;
+
+  const isKrEtfDetail = (mode === 'kr_kr' || mode === 'kr_us');
+  const rowsHtml = rows.map(r => {
+    if (r.flow === null) return '';
+    const col = r.flow > 0 ? 'var(--green)' : r.flow < 0 ? 'var(--red)' : 'var(--text-muted)';
+    const etfs = r.byEtf.slice(0,3).map(e => {
+      const label = isKrEtfDetail ? (e.etf_name || e.etf) : e.etf;
+      return `<span style="font-size:10px;background:var(--surface2,#1e293b);border-radius:3px;padding:1px 5px">${escHtml(label)} ${(e.weight_pct||0).toFixed(1)}%</span>`;
+    }).join(' ');
+    return `<tr style="border-bottom:1px solid var(--border)">
+      <td style="padding:5px 8px;color:var(--text-muted);font-size:11px">${r.date}</td>
+      <td style="padding:5px 8px;text-align:right;font-weight:700;color:${col};white-space:nowrap">${_fmtFlow(r.flow, currency)}</td>
+      <td style="padding:5px 8px">${etfs}</td>
+    </tr>`;
+  }).join('');
+
+  content.innerHTML = `<div style="font-weight:700;font-size:14px;margin-bottom:12px">${escHtml(ticker)} · 날짜별 ETF 유입 상세</div>
+    <div class="table-wrap"><table style="width:100%;border-collapse:collapse;font-size:12px">
+      <thead><tr style="color:var(--text-muted);font-size:11px;border-bottom:1px solid var(--border)">
+        <th style="padding:5px 8px;text-align:left">날짜</th>
+        <th style="padding:5px 8px;text-align:right">순유입</th>
+        <th style="padding:5px 8px;text-align:left">주요 ETF</th>
+      </tr></thead>
+      <tbody>${rowsHtml || '<tr><td colspan="3" style="padding:20px;text-align:center;color:var(--text-muted)">데이터 없음</td></tr>'}</tbody>
+    </table></div>`;
+  modal.style.display = 'flex';
+}
+
+function renderEtfFlows() {
+  if (!_efData) return;
+  const el     = document.getElementById('ef-content');
+  const sortBy = document.getElementById('ef-sort').value;
+  const search = (document.getElementById('ef-search').value || '').toLowerCase();
+  const mode   = _efMode;
+
+  const impKey = 'imp_' + mode;
+  const currency = (mode === 'us_us' || mode === 'us_kr') ? 'USD' : 'KRW';
+  let items = (_efData[impKey] || []).slice();
+
+  if (search) items = items.filter(x =>
+    (x.ticker || '').toLowerCase().includes(search) ||
+    (x.name   || '').toLowerCase().includes(search));
+
+  if (sortBy === 'inflow')  items.sort((a,b) => b.total_flow - a.total_flow);
+  else if (sortBy === 'outflow') items.sort((a,b) => a.total_flow - b.total_flow);
+  else items.sort((a,b) => Math.abs(b.total_flow) - Math.abs(a.total_flow));
+
+  if (!items.length) {
+    el.innerHTML = '<div style="color:var(--text-muted);font-size:12px;padding:20px;text-align:center">해당 종목 없음 — 데이터 수집 후 표시됩니다</div>';
+    return;
+  }
+
+  const maxFlow = Math.max(...items.map(x => Math.abs(x.total_flow)), 1);
+  const modeLabel = { us_us:'🇺🇸 미국 ETF → 미국 종목', kr_kr:'🇰🇷 한국 ETF → 한국 종목', us_kr:'🇺🇸 미국 ETF → 한국 종목', kr_us:'🇰🇷 한국 ETF → 미국 종목' }[mode];
+  // 주말·공휴일 폴백 날짜 표시
+  const fallbackDate = (mode === 'kr_kr') ? _efData._kr_kr_date : (mode === 'kr_us') ? _efData._kr_us_date : null;
+  const fallbackNote = fallbackDate ? `<span style="font-size:10px;color:var(--text-muted);margin-left:6px">(${fallbackDate} 기준)</span>` : '';
+
+  // KR ETF는 이름으로, US ETF는 티커로 표시
+  const isKrEtf = (mode === 'kr_kr' || mode === 'kr_us');
+  const _etfLabel = (e) => isKrEtf ? escHtml(e.etf_name || e.etf) : escHtml(e.etf);
+
+  el.innerHTML = `<div style="font-size:11px;color:var(--text-muted);margin-bottom:8px">${modeLabel} · ${items.length}개 종목 · ETF 편입 비중 × 순유입 계산${fallbackNote}</div>
+  <div class="table-wrap"><table style="width:100%;border-collapse:collapse;font-size:12px">
+  <thead><tr style="color:var(--text-muted);font-size:11px;border-bottom:1px solid var(--border)">
+    <th style="padding:6px 8px;text-align:left">종목명</th>
+    <th style="padding:6px 8px;text-align:right">ETF 유입액</th>
+    <th style="padding:6px 8px;text-align:left">주요 ETF</th>
+    <th style="padding:6px 8px;text-align:center">추이</th>
+  </tr></thead>
+  <tbody>
+  ${items.slice(0, 100).map(x => {
+    const flow = x.total_flow;
+    const isPos = flow >= 0;
+    const col   = isPos ? 'var(--green)' : 'var(--red)';
+    const fmtFlow = _fmtFlow(flow, currency);
+    const top3etf = (x.by_etf || []).slice(0,3).map(e =>
+      `<span style="font-size:10px;background:var(--surface2,#1e293b);border-radius:3px;padding:1px 5px;margin-right:2px">${_etfLabel(e)} ${(e.weight_pct||0).toFixed(1)}%</span>`
+    ).join('');
+    return `<tr style="border-bottom:1px solid var(--border);cursor:pointer"
+      onclick="_drawEfHistoryChart('${escHtml(x.ticker)}','${mode}')"
+      onmouseover="this.style.background='var(--surface)'" onmouseout="this.style.background=''">
+      <td style="padding:6px 8px">
+        <div style="font-weight:700;color:var(--accent2)">${escHtml(x.name || x.ticker)}</div>
+        <div style="font-size:10px;color:var(--text-muted)">${escHtml(x.ticker)}</div>
+      </td>
+      <td style="padding:6px 8px;text-align:right;font-weight:700;color:${col};white-space:nowrap">${fmtFlow}</td>
+      <td style="padding:6px 8px">${top3etf}</td>
+      <td style="padding:6px 8px;text-align:center">
+        <button onclick="event.stopPropagation();_openEfDetail('${escHtml(x.ticker)}','${mode}')"
+          style="background:var(--surface);border:1px solid var(--border);color:var(--text-muted);padding:2px 8px;border-radius:4px;font-size:10px;cursor:pointer">📋</button>
+      </td>
+    </tr>`;
+  }).join('')}
+  </tbody></table></div>`;
 }
 
 
