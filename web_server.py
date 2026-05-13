@@ -205,6 +205,14 @@ def serve_game() -> HTMLResponse:
         return HTMLResponse(content=f.read())
 
 
+@app.get("/api/champion")
+def api_champion() -> JSONResponse:
+    cur = database.get_current_champion()
+    history = database.get_champion_history(7)
+    history_full = database.get_champion_history_full(60)
+    return JSONResponse({"current": cur, "history": history, "history_full": history_full})
+
+
 @app.get("/api/latest")
 def api_latest() -> JSONResponse:
     return JSONResponse(database.get_latest())
@@ -631,160 +639,6 @@ def api_delete_stock(ticker: str) -> JSONResponse:
     return JSONResponse({"ok": True, "deleted": count})
 
 
-def _ensure_local_data(tickers: list[str]) -> dict[str, int]:
-    """
-    각 티커의 로컬 DB 행 수를 확인하고, 260행 미만이면 14개월치를 자동 크롤링.
-    반환: {ticker: row_count} (크롤링 후 기준)
-    """
-    import sqlite3 as _sq
-    import time as _time
-    import crawl_daily
-    from datetime import datetime, timedelta
-
-    _mdb = os.path.join(DIR, "market_data.db")
-    try:
-        _conn = _sq.connect(_mdb)
-        row_counts: dict[str, int] = dict(
-            _conn.execute("SELECT ticker, COUNT(*) FROM stock_daily GROUP BY ticker").fetchall()
-        )
-        _conn.close()
-    except Exception:
-        row_counts = {}
-
-    needs = [t for t in tickers if row_counts.get(t, 0) < 260]
-    if not needs:
-        return row_counts
-
-    end   = datetime.now().strftime("%Y%m%d")
-    start = (datetime.now() - timedelta(days=420)).strftime("%Y%m%d")  # ~14개월
-
-    print(f"[plus-analysis] 데이터 부족 {len(needs)}개 종목 자동 크롤링 시작")
-    for ticker in needs:
-        crawl_daily._collect_ticker(ticker, start, end)
-        crawl_daily._compute_indicators(ticker)
-        _time.sleep(0.15)
-    print(f"[plus-analysis] 크롤링 완료")
-
-    # 갱신된 행 수 재조회
-    try:
-        _conn = _sq.connect(_mdb)
-        row_counts = dict(
-            _conn.execute("SELECT ticker, COUNT(*) FROM stock_daily GROUP BY ticker").fetchall()
-        )
-        _conn.close()
-    except Exception:
-        pass
-    return row_counts
-
-
-@app.get("/api/plus-analysis")
-def api_plus_analysis() -> JSONResponse:
-    """
-    과거 감지 종목에 Plus1/Plus2 필터를 적용한 비교 분석.
-    데이터가 부족한 종목은 자동으로 14개월치 크롤링 후 분석.
-    반환: [{ticker, name, base_pattern, base_conf,
-            plus1_conf, plus1_change, plus2_conf, plus2_change,
-            detect_date, detect_price, current_price, return_pct}]
-    """
-    import scanner
-    import data_store
-    from database import get_algo_config
-
-    _BASE_PATS = ["골삼이(상승초입)", "MA압축지지", "골삼이", "골든샘플", "레드삼각"]
-
-    def _normalize(pat: str) -> str:
-        for b in _BASE_PATS:
-            if pat.startswith(b):
-                return b
-        return pat
-
-    stocks = database.get_stock_tracking()
-    snaps  = database.get_price_snapshots()
-    cfgs   = {k: get_algo_config(k) for k in _BASE_PATS}
-
-    _DET1 = {
-        "골삼이":           scanner.detect_golsami_plus1,
-        "골든샘플":         scanner.detect_golden_sample_plus1,
-        "레드삼각":         scanner.detect_red_triangle_plus1,
-        "골삼이(상승초입)": scanner.detect_golsami_early_plus1,
-        "MA압축지지":       scanner.detect_ma_compression_plus1,
-    }
-    _DET2 = {
-        "골삼이":           scanner.detect_golsami_plus2,
-        "골든샘플":         scanner.detect_golden_sample_plus2,
-        "레드삼각":         scanner.detect_red_triangle_plus2,
-        "골삼이(상승초입)": scanner.detect_golsami_early_plus2,
-        "MA압축지지":       scanner.detect_ma_compression_plus2,
-    }
-
-    # 데이터 부족 종목 자동 크롤링 (260행 미만이면 14개월치 수집)
-    all_tickers = [st["ticker"] for st in stocks]
-    row_counts  = _ensure_local_data(all_tickers)
-
-    # Plus1 캐시 초기화 (winner 프로필 재계산)
-    scanner._PLUS1_CACHE.clear()
-
-    def _run_det(fn, df, ticker, cfg, base_conf):
-        # 크롤링 후에도 260행 미만이면 no_data
-        if fn is None or row_counts.get(ticker, 0) < 260 or df is None:
-            return None, "no_data"
-        try:
-            r = fn(df, ticker, cfg)
-            if r:
-                c = int(r.get("conf", base_conf))
-                chg = "higher" if c > base_conf else ("lower" if c < base_conf else "same")
-                return c, chg
-            return None, "eliminated"
-        except Exception:
-            return None, "error"
-
-    def _run_det1(fn, df, ticker, cfg, base_conf, base_pat):
-        """Plus1 전용: winner 샘플 5개 미만이면 no_data 반환."""
-        if fn is None or row_counts.get(ticker, 0) < 260 or df is None:
-            return None, "no_data"
-        profile = scanner._winner_profile(base_pat)
-        if profile.get("winner_count", 0) < 5:
-            return None, "no_data"
-        return _run_det(fn, df, ticker, cfg, base_conf)
-
-    rows = []
-    for st in stocks:
-        ticker    = st["ticker"]
-        base_pat  = _normalize(st.get("last_pattern") or "")
-        base_conf = int(st.get("last_conf") or 0)
-        snap      = snaps.get(ticker, {})
-        cur_price = snap.get("price") if snap else None
-        det_price = st.get("first_price")
-        ret_pct   = (
-            round((cur_price - det_price) / det_price * 100, 2)
-            if cur_price and det_price else None
-        )
-
-        try:
-            df = data_store.get_ticker_history(ticker, n=300)
-        except Exception:
-            df = None
-
-        cfg = cfgs.get(base_pat, {})
-        p1c, p1chg = _run_det1(_DET1.get(base_pat), df, ticker, cfg, base_conf, base_pat)
-        p2c, p2chg = _run_det(_DET2.get(base_pat), df, ticker, cfg, base_conf)
-
-        rows.append({
-            "ticker":        ticker,
-            "name":          st.get("name", ticker),
-            "base_pattern":  base_pat,
-            "base_conf":     base_conf,
-            "plus1_conf":    p1c,
-            "plus1_change":  p1chg,
-            "plus2_conf":    p2c,
-            "plus2_change":  p2chg,
-            "detect_date":   st.get("first_detected"),
-            "detect_price":  det_price,
-            "current_price": cur_price,
-            "return_pct":    ret_pct,
-        })
-
-    return JSONResponse(rows)
 
 
 @app.get("/api/future-indicators")

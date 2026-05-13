@@ -22,7 +22,7 @@ DIRECTIONS = {
         "proxy_kr": "015760.KS",   # 🇰🇷 한국전력 (KEPCO)
         "proxy_kr_name": "한국전력",
         "higher_better": True,
-        "score_min": 30, "score_max": 90,
+        "score_min": 15, "score_max": 92,
         "milestone_past": "재생에너지 설치 단가 90% 하락, 스마트 그리드 표준화 시작",
         "milestone_now": "AI 데이터센터 전력 수요 폭발 → 전력망 업그레이드 긴급 착수",
         "milestone_next": "SMR 첫 상업 가동, 전력 P2P 거래 플랫폼 상용화 (2028~2031)",
@@ -36,7 +36,7 @@ DIRECTIONS = {
         "proxy_kr": "091160.KS",   # 🇰🇷 KODEX 반도체
         "proxy_kr_name": "KODEX반도체",
         "higher_better": True,
-        "score_min": 20, "score_max": 90,
+        "score_min": 15, "score_max": 92,
         "milestone_past": "클라우드 대중화, GPU 채굴→AI 수요 전환",
         "milestone_now": "분산 컴퓨팅 임대 마켓 급성장",
         "milestone_next": "컴퓨팅 지분 ETF/리츠 제도화 (2028~2031)",
@@ -50,7 +50,7 @@ DIRECTIONS = {
         "proxy_kr": "228790.KS",   # 🇰🇷 TIGER 로보틱스AI
         "proxy_kr_name": "TIGER로보틱스",
         "higher_better": True,
-        "score_min": 20, "score_max": 85,
+        "score_min": 15, "score_max": 92,
         "milestone_past": "산업용 로봇 암 표준화, 물류 자동화 대규모 도입",
         "milestone_now": "휴머노이드 로봇 공장 파일럿 단계",
         "milestone_next": "가정용 범용 로봇 첫 양산 (2029~2032)",
@@ -90,7 +90,7 @@ DIRECTIONS = {
         "proxy_kr": "284430.KS",   # 🇰🇷 KODEX 물
         "proxy_kr_name": "KODEX물",
         "higher_better": True,
-        "score_min": 40, "score_max": 88,  # 구조적 필수 인프라 → 하한 보정
+        "score_min": 15, "score_max": 92,  # 극단값만 방지, 차별 없앰
         "milestone_past": "파리협정, EU 탄소국경세(CBAM) 결정, ESG 주류화",
         "milestone_now": "자발적 탄소시장(VCM) 급성장, 수자원 거래 파일럿 시작",
         "milestone_next": "수자원 거래소 주요국 개설, 탄소시장 국제 표준화 완성 (2027~2030)",
@@ -99,8 +99,8 @@ DIRECTIONS = {
         "name": "금융 시스템 재편",
         "icon": "💎",
         "theme": "프로그래밍 가능한 화폐로 금융 인프라를 직접 운영",
-        "proxy":    "BTC-USD",     # 🇺🇸 Bitcoin
-        "proxy_name": "BTC",
+        "proxy":    "BITQ",        # 🇺🇸 Bitwise Crypto Industry Innovators ETF (거래소·채굴 포함)
+        "proxy_name": "BITQ",
         "proxy_kr": "377300.KS",   # 🇰🇷 KODEX BTC선물H
         "proxy_kr_name": "KODEX BTC선물",
         "higher_better": True,
@@ -117,7 +117,7 @@ DIRECTIONS = {
         "proxy_kr": "396520.KS",   # 🇰🇷 KODEX 미국사이버보안나스닥
         "proxy_kr_name": "KODEX사이버보안",
         "higher_better": True,
-        "score_min": 42, "score_max": 90,  # 디지털 기반 인프라 → 하한 보정
+        "score_min": 15, "score_max": 92,  # 극단값만 방지, 차별 없앰
         "milestone_past": "솔라윈즈·콜로니얼 파이프라인 해킹 — 인프라 취약성 실증",
         "milestone_now": "AI 기반 사이버 공격 급증, 각국 사이버 방어 의무화 입법",
         "milestone_next": "양자 내성 암호화 표준 전환 완성 (2028~2031)",
@@ -131,7 +131,7 @@ DIRECTIONS = {
         "proxy_kr": "012450.KS",   # 🇰🇷 한화에어로스페이스
         "proxy_kr_name": "한화에어로",
         "higher_better": True,
-        "score_min": 20, "score_max": 90,
+        "score_min": 15, "score_max": 92,
         "milestone_past": "미중 반도체 패권 경쟁, 공급망 리쇼어링 가속",
         "milestone_now": "방산·반도체 주권 확보 경쟁, 유럽 전략 자율성 추구",
         "milestone_next": "핵심 산업 공급망 완전 내재화, 방산 수출 구조 정착 (2028~2032)",
@@ -140,8 +140,9 @@ DIRECTIONS = {
         "name": "자율 비즈니스 / AI 에이전트",
         "icon": "🤖",
         "theme": "나 대신 일하는 AI 소유 — Agent OS 시대",
-        "proxy":    "QQQ",         # 🇺🇸 NASDAQ 100 ETF
+        "proxy":    "QQQ",         # 🇺🇸 NASDAQ 100 ETF (기본)
         "proxy_name": "QQQ",
+        "proxy_extra": "ARKQ",     # 🇺🇸 ARK Autonomous Technology & Robotics ETF (AI 순수 익스포저)
         "proxy_kr": "379810.KS",   # 🇰🇷 KODEX 나스닥100
         "proxy_kr_name": "KODEX나스닥100",
         "higher_better": True,
@@ -158,7 +159,7 @@ DIRECTIONS = {
         "proxy_kr": "422160.KS",   # 🇰🇷 KODEX 우주항공&방산
         "proxy_kr_name": "KODEX우주항공",
         "higher_better": True,
-        "score_min": 20, "score_max": 80,  # 서사 강하나 수익화 초기 → 과대평가 방지
+        "score_min": 15, "score_max": 92,  # 극단값만 방지, 차별 없앰
         "milestone_past": "팰컨9 재사용 성공, 스타링크 서비스 시작",
         "milestone_now": "저궤도 위성 인터넷 글로벌 확산, 상업 우주 정거장 착수",
         "milestone_next": "달 기지 첫 상주 운영 (2029~2033)",
@@ -203,9 +204,9 @@ def _momentum_score(closes: list[float], higher_better: bool = True) -> dict:
         mo1_pct = -mo1_pct
         yr1_pct = -yr1_pct
 
-    # 점수 = 50 + (1mo 기여) + (12mo 기여), 클램프 5~95
+    # 점수 = 50 + (1mo 기여) + (12mo 기여), 클램프 15~92 (극단값만 방지)
     raw = 50 + mo1_pct * 2.0 + yr1_pct * 0.4
-    score = round(max(5, min(95, raw)), 1)
+    score = round(max(15, min(92, raw)), 1)
 
     return {
         "score": score,
@@ -236,6 +237,21 @@ def fetch_future_indicators() -> dict[str, dict]:
         closes_us = _fetch_yahoo_closes(d["proxy"], "1y")
         mom_us = _momentum_score(closes_us, d["higher_better"])
         time.sleep(0.3)
+
+        # proxy_extra 가 있으면 두 점수의 중간값 사용 (AI 에이전트 등 복합 프록시)
+        proxy_extra = d.get("proxy_extra")
+        if proxy_extra:
+            closes_extra = _fetch_yahoo_closes(proxy_extra, "1y")
+            if closes_extra:
+                mom_extra = _momentum_score(closes_extra, d["higher_better"])
+                # 두 점수 중간값
+                mom_us = {
+                    "score":   round((mom_us["score"] + mom_extra["score"]) / 2, 1),
+                    "mo1_pct": round((mom_us["mo1_pct"] + mom_extra["mo1_pct"]) / 2, 2),
+                    "yr1_pct": round((mom_us["yr1_pct"] + mom_extra["yr1_pct"]) / 2, 2),
+                    "latest":  mom_us["latest"],  # 기본 프록시 가격 유지
+                }
+            time.sleep(0.3)
 
         # 🇰🇷 국내장
         proxy_kr = d.get("proxy_kr")
@@ -326,10 +342,10 @@ PORTFOLIO_DEFS = {
         "reason_kr": "국내 수처리·환경 인프라 투자 확대",
     },
     "defi": {
-        "symbol": "BTC-USD",      "name": "Bitcoin",
+        "symbol": "BITQ",         "name": "Bitwise Crypto Industry ETF",
         "symbol_kr": "377300.KS", "name_kr": "KODEX BTC선물H",
         "entry_date": "2023-01-03", "entry_date_kr": "2024-01-02",
-        "reason": "FTX 붕괴 저점, BTC ETF 승인 기대 구간",
+        "reason": "FTX 붕괴 저점, 크립토 산업 ETF(거래소·채굴·인프라 포함) 진입",
         "reason_kr": "국내 BTC 선물 ETF 상장 초기",
     },
     "cyber": {

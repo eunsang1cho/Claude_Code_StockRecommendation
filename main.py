@@ -61,7 +61,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from data_fetcher import get_candidates_cached, get_stock_name, get_us_candidates
 from us_tickers import get_russell2000_tickers, get_russell2000_names
-from scanner import scan_all, scan_all_plus, scan_all_us, format_result
+from scanner import scan_all, scan_all_us, format_result, pick_champion
 from watchlist import update_from_scan, add_stock, remove_stock, get_all
 from sector_info import enrich_results
 import database
@@ -121,36 +121,48 @@ async def do_scan(app: Application, is_manual: bool = False) -> None:
         #     await msg.edit_text(f"✅ {len(results)}개 패턴 감지! 업종/테마 분석 중...")
         #     results = await asyncio.to_thread(enrich_results, results, claude_client)
 
-        # 4. Plus 스캔 (로컬 DB 종목) — Plus1/Plus2는 대시보드 탭에서 온디맨드 실행
-        plus_results: list[dict] = []
-        try:
-            import data_store
-            local_tickers = await asyncio.to_thread(data_store.get_all_tickers)
-            if local_tickers:
-                plus_results = await asyncio.to_thread(scan_all_plus, local_tickers)
-        except Exception as e:
-            print(f"⚠️  Plus 스캔 오류: {e}")
+        # 4. DB 저장
+        await asyncio.to_thread(database.save_scan, results, len(tickers))
 
-        # 5. DB 저장 — 기본 + Plus 한 세션으로 통합 저장
-        all_results = results + plus_results
-        await asyncio.to_thread(database.save_scan, all_results, len(tickers))
+        # 5. 챔피언 업데이트
+        best = pick_champion(results)
+        champion = None
+        if best:
+            champion = await asyncio.to_thread(database.update_champion, best)
 
         # 6. 워치리스트 업데이트
         if results:
             await asyncio.to_thread(update_from_scan, results)
 
         # 7. 결과 전송
-        if not all_results:
+        if not results:
             await msg.edit_text(f"✅ 스캔 완료 ({len(tickers)}개)\n📭 감지된 패턴 없음")
             return
 
-        extra_note = f" / +{len(plus_results)}" if plus_results else ""
         await msg.edit_text(
             f"✅ 스캔 완료!\n"
-            f"📊 {len(tickers)}개 중 {len(results)}개 패턴 감지{extra_note}"
+            f"📊 {len(tickers)}개 중 {len(results)}개 패턴 감지"
         )
 
-        for r in all_results:
+        # 챔피언 알림
+        if champion and champion.get("ticker") == (best or {}).get("ticker"):
+            streak = champion.get("streak", 1)
+            streak_txt = f"🔥 {streak}일 연속 1위!" if streak > 1 else "👑 오늘의 챔피언"
+            mkt = "🇺🇸" if "US" in champion.get("market", "") else "🇰🇷"
+            champ_msg = (
+                f"👑 *오늘의 챔피언 {mkt}*\n"
+                f"*{champion['name']}* ({champion['ticker']})\n"
+                f"패턴: {champion['pattern']} | 신뢰도: {champion['conf']}%\n"
+                f"챔피언 점수: {champion['champion_score']:.1f}/100\n"
+                f"현재가: {champion['current_price']:,} | 목표: {champion['target_price']:,}\n"
+                f"{streak_txt}"
+            )
+            try:
+                await app.bot.send_message(chat_id=USER_ID, text=champ_msg, parse_mode="Markdown")
+            except Exception:
+                pass
+
+        for r in results:
             try:
                 await app.bot.send_message(
                     chat_id=USER_ID,
@@ -188,13 +200,31 @@ async def do_scan_us(app: Application, is_manual: bool = False) -> None:
             f"⏳ 패턴 탐지 중\\. \\(10\\~20분 소요\\)",
             parse_mode="MarkdownV2",
         )
-        # US 완화 기준: 대양봉 10%, 거래량 5배
         results: list[dict] = await asyncio.to_thread(
-            scan_all_us, candidates, 0.10, 5.0, names
+            scan_all_us, candidates, ticker_names=names
         )
 
         if results:
             await asyncio.to_thread(database.save_scan, results, len(candidates))
+            best_us = pick_champion(results)
+            if best_us:
+                champion = await asyncio.to_thread(database.update_champion, best_us)
+                # 새 챔피언이 US 종목으로 교체됐으면 알림
+                if champion and champion.get("ticker") == best_us.get("ticker"):
+                    streak = champion.get("streak", 1)
+                    streak_txt = f"🔥 {streak}일 연속 1위!" if streak > 1 else "👑 오늘의 챔피언"
+                    champ_msg = (
+                        f"👑 *챔피언 교체 🇺🇸*\n"
+                        f"*{champion['name']}* ({champion['ticker']})\n"
+                        f"패턴: {champion['pattern']} | 신뢰도: {champion['conf']}%\n"
+                        f"챔피언 점수: {champion['champion_score']:.1f}/100\n"
+                        f"현재가: ${champion['current_price']:,} | 목표: ${champion['target_price']:,}\n"
+                        f"{streak_txt}"
+                    )
+                    try:
+                        await app.bot.send_message(chat_id=USER_ID, text=champ_msg, parse_mode="Markdown")
+                    except Exception:
+                        pass
 
         if not results:
             await msg.edit_text(f"✅ 🇺🇸 미국 스캔 완료 ({len(candidates)}개)\n📭 감지된 패턴 없음")

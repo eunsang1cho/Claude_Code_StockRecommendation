@@ -23,12 +23,41 @@ _MIN_ROWS = 250  # 최소 데이터 수
 
 def _indicators(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
-    df["MA20"] = df["Close"].rolling(20).mean()
-    df["MA60"] = df["Close"].rolling(60).mean()
+    df["MA20"]  = df["Close"].rolling(20).mean()
+    df["MA60"]  = df["Close"].rolling(60).mean()
     df["MA240"] = df["Close"].rolling(240).mean()
     df["VMA20"] = df["Volume"].rolling(20).mean()
-    df["pct"] = df["Close"].pct_change()  # 전일 대비 등락률
+    df["pct"]   = df["Close"].pct_change()
+
+    # RSI 14
+    delta = df["Close"].diff()
+    gain  = delta.clip(lower=0).rolling(14).mean()
+    loss  = (-delta.clip(upper=0)).rolling(14).mean()
+    df["RSI14"] = 100 - (100 / (1 + gain / loss.replace(0, float("nan"))))
+
+    # MACD histogram (EMA12 - EMA26) - EMA9_signal
+    ema12 = df["Close"].ewm(span=12, adjust=False).mean()
+    ema26 = df["Close"].ewm(span=26, adjust=False).mean()
+    macd_line = ema12 - ema26
+    df["MACD_HIST"] = macd_line - macd_line.ewm(span=9, adjust=False).mean()
+
     return df
+
+
+def _macd_ok(df: pd.DataFrame) -> bool:
+    """MACD histogram > 0 확인. 데이터 없으면 통과."""
+    if "MACD_HIST" not in df.columns:
+        return True
+    v = df["MACD_HIST"].iloc[-1]
+    return bool(pd.isna(v) or float(v) > 0)
+
+
+def _rsi_val(df: pd.DataFrame) -> float | None:
+    """현재 RSI14 값. 없으면 None."""
+    if "RSI14" not in df.columns:
+        return None
+    v = df["RSI14"].iloc[-1]
+    return None if pd.isna(v) else float(v)
 
 
 def _esc(text: str) -> str:
@@ -111,6 +140,13 @@ def detect_golsami(df: pd.DataFrame, ticker: str, cfg: dict) -> dict | None:
     vol_decreasing = after["Volume"].mean() < bc["Volume"] * vol_dec
 
     if not (near_open and near_ma20 and ma20_rising and vol_decreasing):
+        return None
+
+    # MACD 양전환 + RSI 과열 제외 (골삼이+의 84% win 조건)
+    if not _macd_ok(df):
+        return None
+    rsi = _rsi_val(df)
+    if rsi is not None and rsi >= 65:
         return None
 
     conf = int(cfg["conf_base"])
@@ -198,6 +234,10 @@ def detect_golden_sample(df: pd.DataFrame, ticker: str, cfg: dict) -> dict | Non
     if not (vol_dried_ok and price_holding and above_ma20 and ma20_rising):
         return None
 
+    # MACD 양전환 확인
+    if not _macd_ok(df):
+        return None
+
     conf = int(cfg["conf_base"])
     if len(after) >= 10:
         conf += int(cfg["conf_days10"])
@@ -275,6 +315,10 @@ def detect_red_triangle(df: pd.DataFrame, ticker: str, cfg: dict) -> dict | None
     above_box   = price > box_top * box_top_pct
 
     if not (near_ma60 and ma60_rising and above_box):
+        return None
+
+    # MACD 양전환 확인 (39% win → 필터로 개선 목표)
+    if not _macd_ok(df):
         return None
 
     conf = int(cfg["conf_base"])
@@ -550,6 +594,10 @@ def detect_ma_compression(df: pd.DataFrame, ticker: str, cfg: dict) -> dict | No
     if abs(ma20 - ma60) / price > ma_conv_tol:
         return None
 
+    # MACD 양전환 확인
+    if not _macd_ok(df):
+        return None
+
     # 신뢰도 계산
     conf = int(cfg.get("conf_base", 72))
     ma20_to_low = abs(ma20 - bc_low) / bc_low
@@ -775,36 +823,268 @@ def detect_ten_bagger(df: pd.DataFrame, ticker: str, cfg: dict) -> dict | None:
     }
 
 
+# ── 눌림목_매집 (NEW — 골삼이(상승초입) 대체) ─────────────────────────────
+
+def detect_pullback_setup(df: pd.DataFrame, ticker: str, cfg: dict) -> dict | None:
+    """
+    눌림목_매집: MA 정배열 상승 구조에서 3~15% 눌림 후 MA20 지지 반등 포착.
+
+    데이터 분석 결과:
+    - 골삼이(상승초입)은 36% win / 40% loss (모든 conf 구간에서 랜덤 이하)
+    - 이 패턴은 같은 아이디어를 구조적으로 재설계:
+      MA정배열 확인 → 적절한 눌림폭 → 거래량 수축 → MA20 지지 반등
+
+    조건:
+    1. MA 정배열: MA20 > MA60 > MA240 (확인된 상승 구조)
+    2. MA20이 MA240 대비 8% 이상 위 (충분한 추세 형성)
+    3. 현재가 MA20 ±3% 이내 (지지선 근접)
+    4. MA20 우상향 (최근 5일 기울기 > 0)
+    5. 최근 5~15일 고점 대비 3~15% 눌림
+    6. 눌림 구간 평균 거래량 < 20일 평균의 65% (매도세 약화)
+    """
+    if df is None or len(df) < _MIN_ROWS:
+        return None
+
+    df = _indicators(df)
+    cur   = df.iloc[-1]
+    price = float(cur["Close"])
+    ma20  = float(cur["MA20"])
+    ma60  = float(cur["MA60"])
+    ma240 = float(cur["MA240"])
+
+    if price < 1000:
+        return None
+    for v in (ma20, ma60, ma240):
+        if pd.isna(v) or v == 0:
+            return None
+
+    # US 강화 파라미터 (cfg에 _us_ 키로 전달)
+    ma_ratio_min  = float(cfg.get("_us_ma_ratio_min", 1.08))   # MA20/MA240 최소 비율
+    rsi_min       = float(cfg.get("_us_rsi_min",      42))     # RSI 최솟값
+    pullback_min  = float(cfg.get("_us_pullback_min", 0.03))   # 눌림폭 최솟값
+
+    # 조건 1: MA 정배열
+    if not (ma20 > ma60 > ma240):
+        return None
+
+    # 조건 2: MA20이 MA240보다 ma_ratio_min 이상 위
+    if ma20 / ma240 < ma_ratio_min:
+        return None
+
+    # 조건 3: 현재가 MA20 ±3% 이내
+    if abs(price - ma20) / ma20 > 0.03:
+        return None
+
+    # 조건 4: MA20 우상향
+    if len(df) < 6:
+        return None
+    ma20_5d = float(df["MA20"].iloc[-6])
+    if pd.isna(ma20_5d) or ma20_5d == 0 or ma20 <= ma20_5d:
+        return None
+
+    # 조건 5: 최근 5~15일 고점 찾기 → 눌림폭 pullback_min~15%
+    peak_window = df.iloc[-(15 + 1):-1]
+    if len(peak_window) < 5:
+        return None
+    peak_idx  = peak_window["High"].idxmax()
+    peak_high = float(peak_window.loc[peak_idx, "High"])
+    if peak_high == 0:
+        return None
+    pullback_pct = (peak_high - price) / peak_high
+    if not (pullback_min <= pullback_pct <= 0.15):
+        return None
+
+    # 고점 이후 최소 2거래일 경과
+    after_peak = df[df.index > peak_idx]
+    if len(after_peak) < 2:
+        return None
+
+    # 조건 6: 눌림 구간 거래량 < 20일 평균 × 65%
+    vma20 = float(cur["VMA20"]) if not pd.isna(cur["VMA20"]) else 0
+    if vma20 > 0:
+        avg_vol_after = float(after_peak["Volume"].mean())
+        if avg_vol_after > vma20 * 0.65:
+            return None
+
+    # MACD 양전환 + RSI rsi_min~65 (눌림목에서 모멘텀 회복 확인)
+    if not _macd_ok(df):
+        return None
+    rsi = _rsi_val(df)
+    if rsi is not None and not (rsi_min <= rsi <= 65):
+        return None
+
+    # ── 신뢰도 계산 ──────────────────────────────────────────────────
+    conf = 72
+
+    if price > ma60:                              # 현재가 MA60 위 (더 강한 정배열)
+        conf += 5
+    if 0.05 <= pullback_pct <= 0.10:              # 5~10% 눌림 (적정 눌림폭)
+        conf += 8
+    if vma20 > 0 and float(after_peak["Volume"].mean()) < vma20 * 0.50:
+        conf += 7                                  # 거래량 50% 미만 수축
+    ma20_slope = (ma20 - ma20_5d) / ma20_5d
+    if ma20_slope > 0.015:
+        conf += 5                                  # MA20 가파른 상승
+
+    name = get_stock_name(ticker)
+    return {
+        "ticker":       ticker,
+        "name":         name,
+        "pattern":      "눌림목_매집",
+        "bc_date":      peak_idx.strftime("%m/%d") if hasattr(peak_idx, "strftime") else str(peak_idx),
+        "bc_pct":       f"-{pullback_pct * 100:.1f}%",
+        "bc_low":       int(price),
+        "days_after":   len(after_peak),
+        "current":      int(price),
+        "ma20":         int(ma20),
+        "ma60":         int(ma60),
+        "ma240":        int(ma240),
+        "entry":        (int(ma20 * 0.98), int(ma20 * 1.02)),
+        "stop":         int(ma60 * 0.97),
+        "target":       int(peak_high * 1.05),
+        "week52_high":  int(df["High"].tail(252).max()),
+        "week52_low":   int(df["Low"].tail(252).min()),
+        "conf":         min(conf, 92),
+    }
+
+
+# ── 챔피언 점수 ──────────────────────────────────────────────────────
+
+def _champion_score(r: dict, df: pd.DataFrame) -> tuple[float, dict]:
+    """
+    종합 챔피언 점수 (0~100).
+    전체 유니버스(KR+US)에서 단 하나를 뽑기 위한 복합 지표.
+
+    반환: (총점, breakdown_dict)
+    구성:
+      1. 패턴 품질      (0~25)
+      2. 신뢰도 보너스  (0~15)
+      3. RSI 스위트스팟 (0~15)  ← 52~62 최적
+      4. MACD 히스트 강도 (0~15) ← 현재값 / 최근20일 최대
+      5. 거래량 수축    (0~10)  ← 낮을수록 스프링 압축
+      6. MA정배열 건강도 (0~10) ← MA20/MA240 spread
+      7. 52주 고점 근접도 (0~10) ← 신고가 직전 = 최고
+    """
+    if df is None or len(df) < 20:
+        return 0.0, {}
+
+    df_i = _indicators(df) if "RSI14" not in df.columns else df
+    cur = df_i.iloc[-1]
+    price = float(cur["Close"])
+    bd: dict[str, float] = {}
+
+    # 1. 패턴 품질 (0-25)
+    bd["패턴"] = float({
+        "텐배거":     25,
+        "눌림목_매집": 22,
+        "골삼이":     20,
+        "골든샘플":   18,
+        "MA압축지지":  16,
+        "레드삼각":    14,
+    }.get(r.get("pattern", ""), 10))
+
+    # 2. 신뢰도 보너스 (0-15): conf 83 = 0pt, 97 = 15pt
+    conf = r.get("conf", 83)
+    bd["신뢰도"] = round(min(15.0, max(0.0, (conf - 83) * 1.07)), 1)
+
+    # 3. RSI 스위트스팟 (0-15): 52~62 최적 (모멘텀 회복 중, 과열 직전)
+    rsi = _rsi_val(df_i)
+    rsi_pt = 0.0
+    if rsi is not None:
+        if   52 <= rsi <= 62: rsi_pt = 15
+        elif 47 <= rsi <  52: rsi_pt = 11
+        elif 62 <  rsi <= 67: rsi_pt =  8
+        elif 43 <= rsi <  47: rsi_pt =  4
+    bd["RSI"] = rsi_pt
+
+    # 4. MACD 히스토그램 강도 (0-15): 현재 / 최근 20일 최대 비율
+    macd_pt = 0.0
+    if "MACD_HIST" in df_i.columns:
+        v  = float(df_i["MACD_HIST"].iloc[-1])
+        mx = float(df_i["MACD_HIST"].tail(20).abs().max())
+        if v > 0 and mx > 0:
+            macd_pt = round(min(15.0, (v / mx) * 15.0), 1)
+    bd["MACD"] = macd_pt
+
+    # 5. 거래량 수축 (0-10): VMA20 대비 낮을수록 코일 압축
+    vma20 = float(cur["VMA20"]) if "VMA20" in df_i.columns and not pd.isna(cur["VMA20"]) else 0.0
+    vol_pt = 0.0
+    if vma20 > 0:
+        vr = float(cur["Volume"]) / vma20
+        if   vr < 0.35: vol_pt = 10
+        elif vr < 0.50: vol_pt =  7
+        elif vr < 0.65: vol_pt =  4
+    bd["거래량"] = vol_pt
+
+    # 6. MA정배열 건강도 (0-10): MA20/MA240 = 1.10~1.30 최적
+    ma20  = float(cur["MA20"])  if "MA20"  in df_i.columns and not pd.isna(cur["MA20"])  else 0.0
+    ma240 = float(cur["MA240"]) if "MA240" in df_i.columns and not pd.isna(cur["MA240"]) else 0.0
+    ma_pt = 0.0
+    if ma20 > 0 and ma240 > 0:
+        sp = ma20 / ma240 - 1.0
+        if   0.10 <= sp <= 0.30: ma_pt = 10
+        elif 0.08 <= sp <  0.10: ma_pt =  7
+        elif 0.30 <  sp <= 0.50: ma_pt =  5
+        elif 0.05 <= sp <  0.08: ma_pt =  3
+    bd["MA정배열"] = ma_pt
+
+    # 7. 52주 고점 근접도 (0-10): 신고가 돌파 직전 = 폭발 직전
+    h52 = r.get("week52_high", 0)
+    h52_pt = 0.0
+    if h52 > 0 and price > 0:
+        px = price / h52
+        if   px >= 0.97: h52_pt = 10
+        elif px >= 0.93: h52_pt =  8
+        elif px >= 0.88: h52_pt =  5
+        elif px >= 0.82: h52_pt =  2
+    bd["52주고점"] = h52_pt
+
+    total = round(sum(bd.values()), 1)
+    return total, bd
+
+
+def pick_champion(results: list[dict]) -> dict | None:
+    """results 중 champion_score 최고 종목 반환."""
+    if not results:
+        return None
+    return max(results, key=lambda r: r.get("champion_score", 0.0))
+
+
 # ── 전체 스캔 ─────────────────────────────────────────────────────────
 
 def _base_ok_us(df: pd.DataFrame, price: float, ma240: float) -> bool:
-    """미국 주식용 기본 조건 (가격 $5+, MA240 위, MA240 우상향)"""
-    if price < 5.0:           # $5 미만 페니스탁 제외
+    """미국 주식용 기본 조건 (가격 $10+, MA240 위, MA240 30d 우상향, MA60 위)"""
+    if price < 10.0:          # $10 미만 저가주 제외
         return False
     if pd.isna(ma240) or ma240 == 0:
         return False
     if price <= ma240:
         return False
-    if len(df) < 260:
+    if len(df) < 270:
         return False
-    ma240_20d = df["MA240"].iloc[-20]
-    if pd.isna(ma240_20d) or ma240 <= ma240_20d:
+    # MA240 우상향: 30거래일 기준으로 강화
+    ma240_30d = df["MA240"].iloc[-30]
+    if pd.isna(ma240_30d) or ma240 <= ma240_30d:
         return False
+    # MA60 위에 있어야 (단기 추세 확인)
+    if "MA60" in df.columns:
+        ma60 = df["MA60"].iloc[-1]
+        if not pd.isna(ma60) and ma60 > 0 and price <= ma60:
+            return False
     return True
 
 
 def scan_all_us(ticker_market: dict[str, str],
-                us_big_pct: float = 0.10,
-                us_vol_mult: float = 5.0,
+                us_big_pct: float = 0.12,
+                us_vol_mult: float = 8.0,
                 ticker_names: dict[str, str] | None = None) -> list[dict]:
     """
-    미국 주식 패턴 스캔. 기존 알고리즘 재사용, MA240 우상향 조건 적용.
+    미국 주식 패턴 스캔. 기존 알고리즘 재사용, 미국 시장 특성에 맞게 강화된 필터 적용.
     ticker_market: {ticker: market}  예) {'NVDA': 'US_NASDAQ'}
-    us_big_pct: 대양봉 기준 (기본 10%, 한국 15%보다 완화)
-    us_vol_mult: 거래량 배수 기준 (기본 5배, 한국 10배보다 완화)
+    us_big_pct: 대양봉 기준 12% (어닝 10% 움직임 노이즈 제거)
+    us_vol_mult: 거래량 배수 8배 (미국 유동성 주식 기준 의미있는 급증)
     """
     from database import get_algo_config
-    cfg_early       = get_algo_config("골삼이(상승초입)")
     cfg_golsami     = get_algo_config("골삼이")
     cfg_golden      = get_algo_config("골든샘플")
     cfg_red         = get_algo_config("레드삼각")
@@ -812,9 +1092,25 @@ def scan_all_us(ticker_market: dict[str, str],
     cfg_ten_bagger  = get_algo_config("텐배거")
 
     # US 전용 파라미터로 오버라이드
-    for cfg in (cfg_early, cfg_golsami, cfg_golden, cfg_red, cfg_ma_compress, cfg_ten_bagger):
+    for cfg in (cfg_golsami, cfg_golden, cfg_red, cfg_ma_compress, cfg_ten_bagger):
         cfg['big_pct']  = us_big_pct
         cfg['vol_mult'] = us_vol_mult
+
+    # 텐배거 US 강화: RS 기준 상향, 52주 고점 근접도 강화
+    cfg_ten_bagger['rs_6m_min']      = 0.25   # 6개월 +25% (한국 20%→US bull market 기준)
+    cfg_ten_bagger['rs_3m_min']      = 0.12   # 3개월 +12%
+    cfg_ten_bagger['high52w_ratio']  = 0.92   # 52주 고점 92% 이상
+    cfg_ten_bagger['vol_contract']   = 0.60   # 거래량 수축 60% 미만 (더 타이트)
+    cfg_ten_bagger['brkout_vol_mult'] = 2.0   # 돌파 거래량 2배 (1.8→2.0)
+
+    # 눌림목_매집 US 강화: MA기준 상향, RSI 범위 축소, 눌림폭 최소 5%
+    cfg_pullback_us = dict(cfg_golsami)
+    cfg_pullback_us['_us_ma_ratio_min'] = 1.15   # MA20/MA240 ≥ 15% (기본 8%)
+    cfg_pullback_us['_us_rsi_min']      = 50     # RSI 50~ (기본 42~)
+    cfg_pullback_us['_us_pullback_min'] = 0.05   # 눌림 최소 5% (기본 3%)
+
+    # US 최소 신뢰도 기준
+    CONF_MIN_US = 80
 
     results: list[dict] = []
 
@@ -833,10 +1129,8 @@ def scan_all_us(ticker_market: dict[str, str],
             if not _base_ok_us(df_ind, price, ma240):
                 continue
 
-            # 기존 패턴 함수는 내부에서 _base_ok (1000원 기준) 호출하므로
-            # US 전용 래퍼: price < 1000 체크를 임시로 우회하기 위해 Close 스케일 조정 불필요
-            # → 대신 각 패턴 함수의 price < 1000 조건만 US에선 무시
-            # 실용적 접근: Close를 ×1000 하면 _base_ok 통과 (패턴 계산은 비율 기반이라 동일)
+            # 실용적 접근: Close를 ×1000 하면 _base_ok(₩1000 체크) 통과
+            # 패턴 계산은 비율 기반이라 스케일 무관
             df_scaled = df.copy()
             df_scaled["Open"]  = df_scaled["Open"]  * 1000
             df_scaled["High"]  = df_scaled["High"]  * 1000
@@ -844,15 +1138,23 @@ def scan_all_us(ticker_market: dict[str, str],
             df_scaled["Close"] = df_scaled["Close"] * 1000
 
             result = (
-                detect_golsami_early(df_scaled, ticker, cfg_early) or
                 detect_golsami(df_scaled, ticker, cfg_golsami) or
                 detect_golden_sample(df_scaled, ticker, cfg_golden) or
                 detect_red_triangle(df_scaled, ticker, cfg_red) or
                 detect_ma_compression(df_scaled, ticker, cfg_ma_compress) or
-                detect_ten_bagger(df_scaled, ticker, cfg_ten_bagger)
+                detect_ten_bagger(df_scaled, ticker, cfg_ten_bagger) or
+                detect_pullback_setup(df_scaled, ticker, cfg_pullback_us)
             )
 
+            # US 최소 신뢰도 필터
+            if result and result.get("conf", 0) < CONF_MIN_US:
+                result = None
+
             if result:
+                score, bd = _champion_score(result, df_ind)
+                result["champion_score"] = score
+                result["champion_breakdown"] = bd
+
                 # 스케일 복원: 저장 단위를 달러 정수로
                 for key in ('current', 'ma20', 'ma60', 'ma240',
                             'bc_open', 'bc_low', 'bc_high',
@@ -884,12 +1186,14 @@ def scan_all(tickers: list[str]) -> list[dict]:
     스캔 시작 시 DB에서 파라미터를 한 번만 로드해 사용.
     """
     from database import get_algo_config
-    cfg_early        = get_algo_config("골삼이(상승초입)")
     cfg_golsami      = get_algo_config("골삼이")
     cfg_golden       = get_algo_config("골든샘플")
     cfg_red          = get_algo_config("레드삼각")
     cfg_ma_compress  = get_algo_config("MA압축지지")
     cfg_ten_bagger   = get_algo_config("텐배거")
+
+    # 한국장 최소 신뢰도: 낮은 신뢰도 신호는 무조건 차단
+    CONF_MIN_KR = 83
 
     results: list[dict] = []
 
@@ -900,14 +1204,17 @@ def scan_all(tickers: list[str]) -> list[dict]:
                 continue
 
             result = (
-                detect_golsami_early(df, ticker, cfg_early) or
                 detect_golsami(df, ticker, cfg_golsami) or
                 detect_golden_sample(df, ticker, cfg_golden) or
                 detect_red_triangle(df, ticker, cfg_red) or
                 detect_ma_compression(df, ticker, cfg_ma_compress) or
-                detect_ten_bagger(df, ticker, cfg_ten_bagger)
+                detect_ten_bagger(df, ticker, cfg_ten_bagger) or
+                detect_pullback_setup(df, ticker, cfg_golsami)
             )
-            if result:
+            if result and result.get("conf", 0) >= CONF_MIN_KR:
+                score, bd = _champion_score(result, df)
+                result["champion_score"] = score
+                result["champion_breakdown"] = bd
                 results.append(result)
 
             time.sleep(0.15)
@@ -939,19 +1246,24 @@ def format_result(r: dict) -> str:
         "골삼이+":              "📊✨",  "골든샘플+":            "🔑✨",
         "레드삼각+":            "📐✨",  "골삼이(상승초입)+":    "🚀✨",
         "MA압축지지+":          "📦✨",
-        # Plus1 (데이터 기반)
+        # 눌림목_매집
+        "눌림목_매집":          "🎯",
+        "눌림목_매집+":         "🎯✨",
+        "눌림목_매집+1":        "🎯📈",
+        "눌림목_매집+2":        "🎯🔬",
+        # Plus1 (MACD 양전환)
         "골삼이+1":             "📊📈", "골든샘플+1":           "🔑📈",
         "레드삼각+1":           "📐📈", "골삼이(상승초입)+1":   "🚀📈",
         "MA압축지지+1":         "📦📈",
-        # Plus2 (TA 지식 기반)
+        # Plus2 (MACD+RSI 복합)
         "골삼이+2":             "📊🔬", "골든샘플+2":           "🔑🔬",
         "레드삼각+2":           "📐🔬", "골삼이(상승초입)+2":   "🚀🔬",
         "MA압축지지+2":         "📦🔬",
     }.get(p, "⚪")
 
     # 패턴별 매수존 (Plus 패턴도 기존과 동일한 entry 구조 사용)
-    base_p = p.rstrip("+")
-    if base_p in ("골삼이", "레드삼각", "골삼이(상승초입)", "MA압축지지", "텐배거"):
+    base_p = p.split("+")[0]   # "골삼이+1" → "골삼이", "눌림목_매집+2" → "눌림목_매집"
+    if base_p in ("골삼이", "레드삼각", "골삼이(상승초입)", "MA압축지지", "텐배거", "눌림목_매집"):
         entry_str = f"₩{r['entry'][0]:,}~{r['entry'][1]:,}"
     else:  # 골든샘플 계열
         entry_str = f"₩{r['ma20']:,} 부근"
@@ -963,504 +1275,3 @@ def format_result(r: dict) -> str:
     )
 
 
-# ── 로컬 DB 조회 (Plus 전용) ──────────────────────────────────────────
-
-def _read_local(ticker: str, n: int = 300) -> pd.DataFrame | None:
-    """
-    market_data.db에서 최근 n일 데이터 반환.
-    data_store 미존재 or 데이터 부족 시 None 반환.
-    """
-    try:
-        import data_store
-        return data_store.get_ticker_history(ticker, n)
-    except Exception:
-        return None
-
-
-# ── Plus 공통 지표 헬퍼 ───────────────────────────────────────────────
-
-def _get_ind(df: pd.DataFrame, col: str, idx: int = -1):
-    """지표 컬럼 값 안전 조회. NaN이면 None 반환."""
-    if col not in df.columns:
-        return None
-    val = df[col].iloc[idx]
-    if pd.isna(val):
-        return None
-    return float(val)
-
-
-def _obv_rising(df: pd.DataFrame, window: int = 5) -> bool:
-    """OBV가 최근 window일 동안 증가 추세인지 확인"""
-    if "OBV" not in df.columns:
-        return False
-    obv = df["OBV"].dropna()
-    if len(obv) < window:
-        return False
-    return float(obv.iloc[-1]) > float(obv.iloc[-window])
-
-
-def _macd_golden_cross(df: pd.DataFrame, lookback: int = 3) -> bool:
-    """최근 lookback일 이내에 MACD 골든크로스(DIF가 SIG를 하향→상향 돌파)가 있는지 확인"""
-    if "MACD_DIF" not in df.columns or "MACD_SIG" not in df.columns:
-        return False
-    recent = df[["MACD_DIF", "MACD_SIG"]].iloc[-(lookback + 1):]
-    for i in range(1, len(recent)):
-        prev_dif = recent["MACD_DIF"].iloc[i - 1]
-        prev_sig = recent["MACD_SIG"].iloc[i - 1]
-        cur_dif  = recent["MACD_DIF"].iloc[i]
-        cur_sig  = recent["MACD_SIG"].iloc[i]
-        if any(pd.isna(v) for v in [prev_dif, prev_sig, cur_dif, cur_sig]):
-            continue
-        if float(prev_dif) < float(prev_sig) and float(cur_dif) >= float(cur_sig):
-            return True
-    return False
-
-
-def _bb_width_shrinking(df: pd.DataFrame, days: int = 3) -> bool:
-    """BB_WIDTH가 최근 days일 연속 감소하는지 확인"""
-    if "BB_WIDTH" not in df.columns:
-        return False
-    bw = df["BB_WIDTH"].dropna()
-    if len(bw) < days:
-        return False
-    vals = [float(bw.iloc[-i]) for i in range(1, days + 1)]  # [최신, 1일전, 2일전 ...]
-    return all(vals[i] < vals[i + 1] for i in range(len(vals) - 1))
-
-
-# ── Plus 탐지 함수 ────────────────────────────────────────────────────
-
-def detect_golsami_plus(df: pd.DataFrame, ticker: str, cfg: dict) -> dict | None:
-    """
-    골삼이+: 기존 조건 + RSI14 < 65 (과열 아님) + MACD hist > 0 (상승 전환)
-    """
-    result = detect_golsami(df, ticker, cfg)
-    if result is None:
-        return None
-
-    rsi  = _get_ind(df, "RSI14")
-    hist = _get_ind(df, "MACD_HIST")
-
-    if rsi is None or rsi >= 65:
-        return None
-    if hist is None or hist <= 0:
-        return None
-
-    result["pattern"] = "골삼이+"
-    return result
-
-
-def detect_golden_sample_plus(df: pd.DataFrame, ticker: str, cfg: dict) -> dict | None:
-    """
-    골든샘플+: 기존 조건 + RSI14 in [35, 70] + OBV 증가 추세
-    """
-    result = detect_golden_sample(df, ticker, cfg)
-    if result is None:
-        return None
-
-    rsi = _get_ind(df, "RSI14")
-
-    if rsi is None or not (35 <= rsi <= 70):
-        return None
-    if not _obv_rising(df, window=5):
-        return None
-
-    result["pattern"] = "골든샘플+"
-    return result
-
-
-def detect_red_triangle_plus(df: pd.DataFrame, ticker: str, cfg: dict) -> dict | None:
-    """
-    레드삼각+: 기존 조건 + 최근 3일 이내 MACD 골든크로스
-    """
-    result = detect_red_triangle(df, ticker, cfg)
-    if result is None:
-        return None
-
-    if not _macd_golden_cross(df, lookback=3):
-        return None
-
-    result["pattern"] = "레드삼각+"
-    return result
-
-
-def detect_golsami_early_plus(df: pd.DataFrame, ticker: str, cfg: dict) -> dict | None:
-    """
-    골삼이(상승초입)+: 기존 조건 + RSI14 in [30, 60] + BB_width < 0.08 (압축)
-    """
-    result = detect_golsami_early(df, ticker, cfg)
-    if result is None:
-        return None
-
-    rsi      = _get_ind(df, "RSI14")
-    bb_width = _get_ind(df, "BB_WIDTH")
-
-    if rsi is None or not (30 <= rsi <= 60):
-        return None
-    if bb_width is None or bb_width >= 0.08:
-        return None
-
-    result["pattern"] = "골삼이(상승초입)+"
-    return result
-
-
-def detect_ma_compression_plus(df: pd.DataFrame, ticker: str, cfg: dict) -> dict | None:
-    """
-    MA압축지지+: 기존 조건 + BB_width 3일 연속 감소 + Stoch_K < 50
-    """
-    result = detect_ma_compression(df, ticker, cfg)
-    if result is None:
-        return None
-
-    stoch_k = _get_ind(df, "STOCH_K")
-
-    if not _bb_width_shrinking(df, days=3):
-        return None
-    if stoch_k is None or stoch_k >= 50:
-        return None
-
-    result["pattern"] = "MA압축지지+"
-    return result
-
-
-# ── Plus 전체 스캔 ────────────────────────────────────────────────────
-
-def scan_all_plus(tickers: list[str]) -> list[dict]:
-    """
-    로컬 DB 전종목 대상 Plus 알고리즘 실행 (API 호출 없음).
-    tickers: data_store.get_all_tickers() 로 가져온 전체 종목 코드 목록
-    """
-    from database import get_algo_config
-    cfg_early       = get_algo_config("골삼이(상승초입)")
-    cfg_golsami     = get_algo_config("골삼이")
-    cfg_golden      = get_algo_config("골든샘플")
-    cfg_red         = get_algo_config("레드삼각")
-    cfg_ma_compress = get_algo_config("MA압축지지")
-
-    results: list[dict] = []
-
-    for ticker in tickers:
-        try:
-            df = _read_local(ticker, n=300)
-            if df is None or len(df) < 30:
-                continue
-
-            result = (
-                detect_golsami_early_plus(df, ticker, cfg_early) or
-                detect_golsami_plus(df, ticker, cfg_golsami) or
-                detect_golden_sample_plus(df, ticker, cfg_golden) or
-                detect_red_triangle_plus(df, ticker, cfg_red) or
-                detect_ma_compression_plus(df, ticker, cfg_ma_compress)
-            )
-            if result:
-                results.append(result)
-
-        except Exception:
-            continue
-
-    return results
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# Plus1 — 데이터 기반: 수익 종목들의 지표 프로필에 매칭되는 경우만 통과
-# ═══════════════════════════════════════════════════════════════════════════
-
-_PLUS1_CACHE: dict = {}
-
-
-def _build_winner_profile(pattern: str) -> dict:
-    """
-    stocks.db 수익 종목(+2% 이상)의 감지 시점 지표값 분포를 분석해 프로필 반환.
-    데이터 부족 시 넓은 허용 범위(사실상 무필터) 반환.
-    """
-    default = {
-        "rsi14_lo": 20, "rsi14_hi": 80,
-        "macd_hist_pos_pct": 0.3,
-        "stoch_k_lo": 5, "stoch_k_hi": 95,
-        "count": 0, "winner_count": 0,
-    }
-    try:
-        import sqlite3, os
-        sdb = os.path.join(os.path.dirname(os.path.abspath(__file__)), "stocks.db")
-        mdb = os.path.join(os.path.dirname(os.path.abspath(__file__)), "market_data.db")
-        if not os.path.exists(sdb) or not os.path.exists(mdb):
-            return default
-
-        conn = sqlite3.connect(sdb)
-        conn.row_factory = sqlite3.Row
-        rows = conn.execute("""
-            SELECT sr.ticker,
-                   sr.scanned_at    AS det_at,
-                   sr.current_price AS entry,
-                   ps.price         AS cur
-            FROM scan_results sr
-            INNER JOIN (
-                SELECT ticker, MIN(scanned_at) AS min_at
-                FROM   scan_results WHERE pattern = ?
-                GROUP  BY ticker
-            ) first ON sr.ticker = first.ticker
-                    AND sr.scanned_at = first.min_at
-            LEFT JOIN price_snapshots ps ON sr.ticker = ps.ticker
-            WHERE sr.pattern = ? AND ps.price IS NOT NULL
-        """, (pattern, pattern)).fetchall()
-        conn.close()
-
-        if not rows:
-            return default
-
-        winners = [r for r in rows
-                   if r["cur"] and r["entry"] and r["cur"] > r["entry"] * 1.02]
-        target  = winners if len(winners) >= 3 else list(rows)
-
-        mconn = sqlite3.connect(mdb)
-        mconn.row_factory = sqlite3.Row
-        rsi_v, macd_v, stoch_v = [], [], []
-        for r in target:
-            det_date = r["det_at"][:10].replace("-", "")
-            ind = mconn.execute(
-                """SELECT rsi14, macd_hist, stoch_k
-                   FROM stock_daily WHERE ticker=? AND date<=?
-                   ORDER BY date DESC LIMIT 1""",
-                (r["ticker"], det_date)
-            ).fetchone()
-            if not ind:
-                continue
-            if ind["rsi14"]     is not None: rsi_v.append(ind["rsi14"])
-            if ind["macd_hist"] is not None: macd_v.append(ind["macd_hist"])
-            if ind["stoch_k"]   is not None: stoch_v.append(ind["stoch_k"])
-        mconn.close()
-
-        if not rsi_v:
-            return default
-
-        rsi_v.sort()
-        n = len(rsi_v)
-        rsi_lo = max(15, rsi_v[max(0, n // 10)] - 5)
-        rsi_hi = min(85, rsi_v[min(n - 1, n * 9 // 10)] + 5)
-        macd_pos_pct = sum(1 for v in macd_v if v > 0) / max(len(macd_v), 1)
-
-        profile: dict = {
-            "rsi14_lo":          rsi_lo,
-            "rsi14_hi":          rsi_hi,
-            "macd_hist_pos_pct": macd_pos_pct,
-            "count":             len(target),
-            "winner_count":      len(winners),
-        }
-        if stoch_v:
-            stoch_v.sort()
-            m = len(stoch_v)
-            profile["stoch_k_lo"] = max(5,  stoch_v[max(0, m // 10)] - 5)
-            profile["stoch_k_hi"] = min(95, stoch_v[min(m - 1, m * 9 // 10)] + 5)
-        else:
-            profile["stoch_k_lo"], profile["stoch_k_hi"] = 5, 95
-
-        return profile
-    except Exception:
-        return default
-
-
-def _winner_profile(pattern: str) -> dict:
-    """캐시된 winner profile (scan_all_plus1 세션 내 1회 계산)"""
-    if pattern not in _PLUS1_CACHE:
-        _PLUS1_CACHE[pattern] = _build_winner_profile(pattern)
-    return _PLUS1_CACHE[pattern]
-
-
-def _plus1_filter(df: pd.DataFrame, base_pattern: str) -> bool:
-    """현재 지표가 winner profile 범위 안인지 확인. 지표 없으면 통과."""
-    p = _winner_profile(base_pattern)
-    rsi     = _get_ind(df, "RSI14")
-    hist    = _get_ind(df, "MACD_HIST")
-    stoch_k = _get_ind(df, "STOCH_K")
-    if rsi is not None and not (p["rsi14_lo"] <= rsi <= p["rsi14_hi"]):
-        return False
-    if hist is not None and p["macd_hist_pos_pct"] >= 0.70 and hist <= 0:
-        return False
-    if stoch_k is not None and not (p["stoch_k_lo"] <= stoch_k <= p["stoch_k_hi"]):
-        return False
-    return True
-
-
-def _plus1_label(base_pattern: str) -> str:
-    p = _winner_profile(base_pattern)
-    return (f"RSI[{p['rsi14_lo']:.0f}~{p['rsi14_hi']:.0f}] "
-            f"{p['winner_count']}승/{p['count']}건")
-
-
-def detect_golsami_plus1(df, ticker, cfg):
-    r = detect_golsami(df, ticker, cfg)
-    if r is None or not _plus1_filter(df, "골삼이"): return None
-    r["pattern"] = "골삼이+1"; r["plus1_info"] = _plus1_label("골삼이"); return r
-
-def detect_golden_sample_plus1(df, ticker, cfg):
-    r = detect_golden_sample(df, ticker, cfg)
-    if r is None or not _plus1_filter(df, "골든샘플"): return None
-    r["pattern"] = "골든샘플+1"; r["plus1_info"] = _plus1_label("골든샘플"); return r
-
-def detect_red_triangle_plus1(df, ticker, cfg):
-    r = detect_red_triangle(df, ticker, cfg)
-    if r is None or not _plus1_filter(df, "레드삼각"): return None
-    r["pattern"] = "레드삼각+1"; r["plus1_info"] = _plus1_label("레드삼각"); return r
-
-def detect_golsami_early_plus1(df, ticker, cfg):
-    r = detect_golsami_early(df, ticker, cfg)
-    if r is None or not _plus1_filter(df, "골삼이(상승초입)"): return None
-    r["pattern"] = "골삼이(상승초입)+1"; r["plus1_info"] = _plus1_label("골삼이(상승초입)"); return r
-
-def detect_ma_compression_plus1(df, ticker, cfg):
-    r = detect_ma_compression(df, ticker, cfg)
-    if r is None or not _plus1_filter(df, "MA압축지지"): return None
-    r["pattern"] = "MA압축지지+1"; r["plus1_info"] = _plus1_label("MA압축지지"); return r
-
-
-def scan_all_plus1(tickers: list[str]) -> list[dict]:
-    """Plus1 스캔: 수익 종목 지표 프로필 기반 필터."""
-    global _PLUS1_CACHE
-    _PLUS1_CACHE.clear()
-
-    from database import get_algo_config
-    cfgs = {k: get_algo_config(k) for k in
-            ["골삼이(상승초입)", "골삼이", "골든샘플", "레드삼각", "MA압축지지"]}
-
-    results: list[dict] = []
-    for ticker in tickers:
-        try:
-            df = _read_local(ticker, n=300)
-            if df is None or len(df) < 30: continue
-            result = (
-                detect_golsami_early_plus1(df, ticker, cfgs["골삼이(상승초입)"]) or
-                detect_golsami_plus1(df, ticker, cfgs["골삼이"]) or
-                detect_golden_sample_plus1(df, ticker, cfgs["골든샘플"]) or
-                detect_red_triangle_plus1(df, ticker, cfgs["레드삼각"]) or
-                detect_ma_compression_plus1(df, ticker, cfgs["MA압축지지"])
-            )
-            if result: results.append(result)
-        except Exception:
-            continue
-    return results
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# Plus2 — TA 지식 기반: 각 패턴의 약점을 보조지표로 보강
-# ═══════════════════════════════════════════════════════════════════════════
-#
-# 패턴별 보강 전략:
-#   골삼이        → 추세 없는 눌림 오신호: MACD 양전환 + Stoch 상승 신호
-#   골든샘플      → 분산 구간 혼동:      OBV 10일 매집 + BB중심선 우상향
-#   레드삼각      → 돌파 후 재실패:      ATR 확대 + Stoch 전환 + MACD>0
-#   골삼이(초입)  → 급등 고점 혼동:      RSI 50 돌파 + MACD_DIF 상승
-#   MA압축지지    → 압축 더 심화:        BB 극도수축(<0.06) + Stoch 회복
-
-def _atr_expanding(df: pd.DataFrame, window: int = 5) -> bool:
-    if "ATR14" not in df.columns: return False
-    atr = df["ATR14"].dropna()
-    if len(atr) < window * 2: return False
-    return float(atr.iloc[-window:].mean()) > float(atr.iloc[-(window*2):-window].mean())
-
-def _bb_middle_rising(df: pd.DataFrame, days: int = 5) -> bool:
-    if "BB_MIDDLE" not in df.columns: return False
-    mid = df["BB_MIDDLE"].dropna()
-    if len(mid) < days: return False
-    return float(mid.iloc[-1]) > float(mid.iloc[-days])
-
-def _stoch_bullish(df: pd.DataFrame) -> bool:
-    k = _get_ind(df, "STOCH_K"); d = _get_ind(df, "STOCH_D")
-    if k is None: return False
-    if d is not None and k > d and k > 20: return True
-    return k > 50
-
-def _macd_dif_rising(df: pd.DataFrame, days: int = 3) -> bool:
-    if "MACD_DIF" not in df.columns: return False
-    dif = df["MACD_DIF"].dropna()
-    if len(dif) < days + 1: return False
-    return float(dif.iloc[-1]) > float(dif.iloc[-(days+1)])
-
-def _rsi_above50_crossover(df: pd.DataFrame) -> bool:
-    if "RSI14" not in df.columns: return False
-    rsi = df["RSI14"].dropna()
-    if len(rsi) < 6: return False
-    recent = rsi.iloc[-5:]
-    for i in range(1, len(recent)):
-        if float(recent.iloc[i-1]) < 50 <= float(recent.iloc[i]): return True
-    return float(rsi.iloc[-1]) > 50 and float(rsi.iloc[-6]) < 50
-
-
-def detect_golsami_plus2(df: pd.DataFrame, ticker: str, cfg: dict) -> dict | None:
-    """골삼이+2: 기존 + MACD 양전환 + BB수축 또는 Stoch 상승 (추세 없는 오신호 제거)"""
-    r = detect_golsami(df, ticker, cfg)
-    if r is None: return None
-    hist = _get_ind(df, "MACD_HIST"); stoch_k = _get_ind(df, "STOCH_K")
-    if hist is None or hist <= 0: return None
-    if not (_bb_width_shrinking(df, 2) or _stoch_bullish(df)): return None
-    if stoch_k is not None and stoch_k > 80: return None
-    r["pattern"] = "골삼이+2"; return r
-
-
-def detect_golden_sample_plus2(df: pd.DataFrame, ticker: str, cfg: dict) -> dict | None:
-    """골든샘플+2: 기존 + OBV 10일 매집 + BB중심선 우상향 + RSI>40 (분산 구간 제거)"""
-    r = detect_golden_sample(df, ticker, cfg)
-    if r is None: return None
-    rsi = _get_ind(df, "RSI14")
-    if not _obv_rising(df, window=10): return None
-    if not _bb_middle_rising(df, days=5): return None
-    if rsi is not None and rsi < 40: return None
-    r["pattern"] = "골든샘플+2"; return r
-
-
-def detect_red_triangle_plus2(df: pd.DataFrame, ticker: str, cfg: dict) -> dict | None:
-    """레드삼각+2: 기존 + ATR 확대 + MACD>0 + Stoch 전환 (재돌파 실패 제거)"""
-    r = detect_red_triangle(df, ticker, cfg)
-    if r is None: return None
-    hist = _get_ind(df, "MACD_HIST")
-    if not _atr_expanding(df, window=5): return None
-    if hist is None or hist <= 0: return None
-    if not _stoch_bullish(df): return None
-    r["pattern"] = "레드삼각+2"; return r
-
-
-def detect_golsami_early_plus2(df: pd.DataFrame, ticker: str, cfg: dict) -> dict | None:
-    """골삼이(상승초입)+2: 기존 + RSI 50 돌파 + MACD_DIF 상승 (급등 고점 혼동 제거)"""
-    r = detect_golsami_early(df, ticker, cfg)
-    if r is None: return None
-    rsi = _get_ind(df, "RSI14")
-    if not _rsi_above50_crossover(df):
-        if rsi is None or rsi < 48: return None
-    if not _macd_dif_rising(df, days=3): return None
-    if rsi is not None and rsi > 70: return None
-    r["pattern"] = "골삼이(상승초입)+2"; return r
-
-
-def detect_ma_compression_plus2(df: pd.DataFrame, ticker: str, cfg: dict) -> dict | None:
-    """MA압축지지+2: 기존 + BB 극도수축(<0.06) + Stoch 과매도 회복 (압축 심화 함정 제거)"""
-    r = detect_ma_compression(df, ticker, cfg)
-    if r is None: return None
-    bb_width = _get_ind(df, "BB_WIDTH"); stoch_k = _get_ind(df, "STOCH_K")
-    stoch_d  = _get_ind(df, "STOCH_D")
-    if bb_width is None or bb_width >= 0.06: return None
-    if stoch_k is not None:
-        if stoch_k > 50: return None
-        if stoch_d is not None and stoch_k < stoch_d: return None
-    r["pattern"] = "MA압축지지+2"; return r
-
-
-def scan_all_plus2(tickers: list[str]) -> list[dict]:
-    """Plus2 스캔: TA 지식 기반 강화 필터."""
-    from database import get_algo_config
-    cfgs = {k: get_algo_config(k) for k in
-            ["골삼이(상승초입)", "골삼이", "골든샘플", "레드삼각", "MA압축지지"]}
-
-    results: list[dict] = []
-    for ticker in tickers:
-        try:
-            df = _read_local(ticker, n=300)
-            if df is None or len(df) < 30: continue
-            result = (
-                detect_golsami_early_plus2(df, ticker, cfgs["골삼이(상승초입)"]) or
-                detect_golsami_plus2(df, ticker, cfgs["골삼이"]) or
-                detect_golden_sample_plus2(df, ticker, cfgs["골든샘플"]) or
-                detect_red_triangle_plus2(df, ticker, cfgs["레드삼각"]) or
-                detect_ma_compression_plus2(df, ticker, cfgs["MA압축지지"])
-            )
-            if result: results.append(result)
-        except Exception:
-            continue
-    return results

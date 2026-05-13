@@ -1,0 +1,302 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CMS 백테스트</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<style>
+  :root {
+    --bg: #0f172a; --surface: #1e293b; --surface2: #263044;
+    --border: #334155; --text: #e2e8f0; --muted: #94a3b8;
+    --green: #4ade80; --red: #f87171; --orange: #fb923c;
+    --yellow: #fbbf24; --blue: #60a5fa; --purple: #a78bfa;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: 'Segoe UI', sans-serif; padding: 20px; }
+  h1 { font-size: 18px; font-weight: 800; margin-bottom: 6px; }
+  .sub { font-size: 12px; color: var(--muted); margin-bottom: 20px; }
+  .cards { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 20px; }
+  @media(max-width:700px){ .cards { grid-template-columns: repeat(2,1fr); } }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 14px; text-align: center; }
+  .card-label { font-size: 10px; color: var(--muted); margin-bottom: 4px; }
+  .card-val { font-size: 26px; font-weight: 800; }
+  .card-sub { font-size: 10px; color: var(--muted); margin-top: 3px; }
+  .chart-box { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 16px; margin-bottom: 16px; }
+  .chart-title { font-size: 12px; font-weight: 700; color: var(--muted); margin-bottom: 10px; }
+  canvas { max-height: 260px; }
+  .regime-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  .regime-table th { background: var(--surface2); padding: 6px 10px; text-align: left; font-size: 10px; color: var(--muted); font-weight: 600; }
+  .regime-table td { padding: 6px 10px; border-top: 1px solid var(--border); }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 10px; font-weight: 700; }
+  #loading { text-align: center; padding: 60px; color: var(--muted); font-size: 14px; }
+  #error { color: var(--red); text-align: center; padding: 40px; display: none; }
+  #content { display: none; }
+  .btn { background: var(--surface2); border: 1px solid var(--border); color: var(--text); border-radius: 8px; padding: 6px 14px; font-size: 12px; cursor: pointer; }
+  .btn:hover { background: var(--border); }
+  .header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
+  .pos { color: var(--green); } .neg { color: var(--red); }
+</style>
+</head>
+<body>
+<div class="header">
+  <div>
+    <h1>📊 CMS 포트폴리오 백테스트</h1>
+    <div class="sub" id="sub-info">데이터 로딩 중…</div>
+  </div>
+  <button class="btn" onclick="load(true)">🔄 새로고침</button>
+</div>
+
+<div id="loading">⏳ 5년치 데이터 수집 중… (30초~1분 소요)</div>
+<div id="error"></div>
+
+<div id="content">
+  <!-- 요약 카드 -->
+  <div class="cards">
+    <div class="card">
+      <div class="card-label">CMS 포트폴리오 총 수익</div>
+      <div class="card-val" id="c-total">--</div>
+      <div class="card-sub">5년 누적</div>
+    </div>
+    <div class="card">
+      <div class="card-label">최대 낙폭 (MDD)</div>
+      <div class="card-val" id="c-mdd">--</div>
+      <div class="card-sub">최악 구간</div>
+    </div>
+    <div class="card">
+      <div class="card-label">샤프 지수</div>
+      <div class="card-val" id="c-sharpe">--</div>
+      <div class="card-sub">연율화</div>
+    </div>
+    <div class="card">
+      <div class="card-label">vs 나스닥 대비</div>
+      <div class="card-val" id="c-vs-nasdaq">--</div>
+      <div class="card-sub">수익률 차이</div>
+    </div>
+  </div>
+
+  <!-- 누적 수익 차트 -->
+  <div class="chart-box">
+    <div class="chart-title">📈 누적 수익률 추이 (초기 = 100)</div>
+    <canvas id="chart-return"></canvas>
+  </div>
+
+  <!-- CMS 스코어 차트 -->
+  <div class="chart-box">
+    <div class="chart-title">🧮 CMS 스코어 추이 (월말 기준)</div>
+    <canvas id="chart-cms"></canvas>
+  </div>
+
+  <!-- 레짐 분포 표 -->
+  <div class="chart-box">
+    <div class="chart-title">🗂 레짐별 분포 & 벤치마크 수익</div>
+    <table class="regime-table">
+      <thead>
+        <tr>
+          <th>레짐</th><th>개월수</th><th>비중</th>
+          <th>CMS 포트</th><th>KOSPI</th><th>나스닥</th><th>S&amp;P500</th><th>다우</th>
+        </tr>
+      </thead>
+      <tbody id="bench-tbody"></tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+const REGIME_COLOR = {
+  'Risk-On':'#4ade80','Neutral':'#a3e635','Caution':'#fbbf24',
+  'Risk-Off':'#fb923c','Crisis':'#f87171','Collapse':'#ef4444'
+};
+const BENCH_LABELS = { KOSPI:'KOSPI', DOW:'다우', NASDAQ:'나스닥', SPX:'S&P500' };
+const BENCH_COLORS = { KOSPI:'#60a5fa', DOW:'#a78bfa', NASDAQ:'#fb923c', SPX:'#94a3b8' };
+
+let _data = null;
+let _chartReturn = null, _chartCms = null;
+
+async function load(force = false) {
+  document.getElementById('loading').style.display = 'block';
+  document.getElementById('content').style.display = 'none';
+  document.getElementById('error').style.display = 'none';
+  document.getElementById('sub-info').textContent = '데이터 로딩 중…';
+  try {
+    const url = force ? '/api/cms/backtest?refresh=true' : '/api/cms/backtest';
+    const r = await fetch(url);
+    const d = await r.json();
+    if (!d.ok) throw new Error(d.error || '서버 오류');
+    _data = d;
+    render(d);
+  } catch(e) {
+    document.getElementById('loading').style.display = 'none';
+    const el = document.getElementById('error');
+    el.style.display = 'block';
+    el.textContent = '오류: ' + e.message;
+  }
+}
+
+function pctColor(v) {
+  return v >= 0 ? 'var(--green)' : 'var(--red)';
+}
+
+function render(d) {
+  document.getElementById('loading').style.display = 'none';
+  document.getElementById('content').style.display = 'block';
+
+  const s = d.summary;
+  const months = s.months || '?';
+  const years  = Math.round(months / 12 * 10) / 10;
+
+  document.getElementById('sub-info').textContent =
+    `${years}년 (${months}개월) · 캐시 유효 6시간`;
+
+  // 요약 카드
+  const total = s.total_return;
+  const mdd   = s.max_drawdown;
+  const sharpe= s.sharpe;
+  const vn    = s.bench_returns?.NASDAQ;
+
+  document.getElementById('c-total').textContent   = (total >= 0 ? '+' : '') + total + '%';
+  document.getElementById('c-total').style.color   = pctColor(total);
+  document.getElementById('c-mdd').textContent     = mdd + '%';
+  document.getElementById('c-mdd').style.color     = 'var(--red)';
+  document.getElementById('c-sharpe').textContent  = sharpe;
+  document.getElementById('c-sharpe').style.color  = sharpe >= 0.5 ? 'var(--green)' : 'var(--muted)';
+
+  if (vn != null) {
+    const diff = Math.round((total - vn) * 10) / 10;
+    document.getElementById('c-vs-nasdaq').textContent = (diff >= 0 ? '+' : '') + diff + '%';
+    document.getElementById('c-vs-nasdaq').style.color = pctColor(diff);
+  }
+
+  const labels = Object.keys(d.portfolio).sort();
+
+  // ── 누적 수익 차트 ───────────────────────────────────────────────
+  const portVals = labels.map(l => d.portfolio[l]);
+  const datasets = [{
+    label: 'CMS 포트폴리오',
+    data: portVals,
+    borderColor: '#fbbf24', backgroundColor: 'transparent',
+    borderWidth: 2.5, pointRadius: 0, tension: 0.3,
+  }];
+  for (const [key, label] of Object.entries(BENCH_LABELS)) {
+    if (!d.benchmarks[key]) continue;
+    const vals = labels.map(l => d.benchmarks[key][l] ?? null);
+    datasets.push({
+      label, data: vals,
+      borderColor: BENCH_COLORS[key], backgroundColor: 'transparent',
+      borderWidth: 1.5, pointRadius: 0, tension: 0.3,
+      borderDash: key === 'SPX' ? [4,3] : [],
+    });
+  }
+
+  if (_chartReturn) _chartReturn.destroy();
+  _chartReturn = new Chart(document.getElementById('chart-return'), {
+    type: 'line',
+    data: { labels, datasets },
+    options: {
+      responsive: true, maintainAspectRatio: true,
+      plugins: {
+        legend: { labels: { color: '#94a3b8', font: { size: 11 }, boxWidth: 14 } },
+        tooltip: { mode: 'index', intersect: false,
+          callbacks: { label: ctx => ` ${ctx.dataset.label}: ${ctx.parsed.y?.toFixed(1)}` }
+        },
+      },
+      scales: {
+        x: { ticks: { color: '#64748b', maxTicksLimit: 12, font: { size: 10 } },
+             grid: { color: '#1e293b' } },
+        y: { ticks: { color: '#64748b', font: { size: 10 },
+                      callback: v => v.toFixed(0) },
+             grid: { color: '#1e2940' } },
+      },
+    }
+  });
+
+  // ── CMS 스코어 차트 ──────────────────────────────────────────────
+  const cmsLabels = Object.keys(d.cms).sort();
+  const cmsVals   = cmsLabels.map(l => d.cms[l]);
+  const bgColors  = cmsLabels.map(l => {
+    const regime = d.regimes[l];
+    const c = REGIME_COLOR[regime] || '#94a3b8';
+    return c + '33';
+  });
+
+  if (_chartCms) _chartCms.destroy();
+  _chartCms = new Chart(document.getElementById('chart-cms'), {
+    type: 'line',
+    data: {
+      labels: cmsLabels,
+      datasets: [
+        {
+          label: 'CMS 스코어',
+          data: cmsVals,
+          borderColor: '#60a5fa', backgroundColor: bgColors,
+          borderWidth: 2, pointRadius: 2, pointBackgroundColor: bgColors,
+          fill: true, tension: 0.3,
+        },
+        {
+          label: '위험(65)',
+          data: cmsLabels.map(() => 65),
+          borderColor: '#f87171', borderWidth: 1, borderDash: [4,3],
+          pointRadius: 0, fill: false,
+        },
+        {
+          label: '반등(45)',
+          data: cmsLabels.map(() => 45),
+          borderColor: '#4ade80', borderWidth: 1, borderDash: [4,3],
+          pointRadius: 0, fill: false,
+        },
+      ]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: true,
+      plugins: {
+        legend: { labels: { color: '#94a3b8', font: { size: 11 }, boxWidth: 14 } },
+        tooltip: { mode: 'index', intersect: false,
+          callbacks: {
+            label: ctx => {
+              if (ctx.datasetIndex !== 0) return null;
+              const regime = d.regimes[ctx.label] || '';
+              return ` CMS: ${ctx.parsed.y} (${regime})`;
+            }
+          }
+        },
+      },
+      scales: {
+        x: { ticks: { color: '#64748b', maxTicksLimit: 12, font: { size: 10 } },
+             grid: { color: '#1e293b' } },
+        y: { min: 0, max: 110,
+             ticks: { color: '#64748b', font: { size: 10 } },
+             grid: { color: '#1e2940' } },
+      },
+    }
+  });
+
+  // ── 레짐 분포 표 ─────────────────────────────────────────────────
+  const regimeCounts = s.regime_months || {};
+  const totalM = Object.values(regimeCounts).reduce((a, b) => a + b, 0) || 1;
+  const order  = ['Risk-On','Neutral','Caution','Risk-Off','Crisis','Collapse'];
+  const br     = s.bench_returns || {};
+
+  const tbody = document.getElementById('bench-tbody');
+  tbody.innerHTML = order
+    .filter(r => regimeCounts[r])
+    .map(regime => {
+      const n   = regimeCounts[regime] || 0;
+      const pct = Math.round(n / totalM * 100);
+      const col = REGIME_COLOR[regime] || '#94a3b8';
+      return `<tr>
+        <td><span class="badge" style="background:${col}22;color:${col};border:1px solid ${col}55">${regime}</span></td>
+        <td>${n}개월</td>
+        <td>${pct}%</td>
+        <td style="font-weight:700;color:${pctColor(s.total_return)}">${s.total_return >= 0 ? '+' : ''}${s.total_return}%</td>
+        <td style="color:${pctColor(br.KOSPI)}">${br.KOSPI != null ? (br.KOSPI >= 0 ? '+' : '') + br.KOSPI + '%' : '-'}</td>
+        <td style="color:${pctColor(br.NASDAQ)}">${br.NASDAQ != null ? (br.NASDAQ >= 0 ? '+' : '') + br.NASDAQ + '%' : '-'}</td>
+        <td style="color:${pctColor(br.SPX)}">${br.SPX != null ? (br.SPX >= 0 ? '+' : '') + br.SPX + '%' : '-'}</td>
+        <td style="color:${pctColor(br.DOW)}">${br.DOW != null ? (br.DOW >= 0 ? '+' : '') + br.DOW + '%' : '-'}</td>
+      </tr>`;
+    }).join('');
+}
+
+load();
+</script>
+</body>
+</html>

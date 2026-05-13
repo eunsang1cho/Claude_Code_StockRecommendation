@@ -3,9 +3,8 @@ block_deal_tracker.py
 대인(VIP) 대규모 블록딜 추적기
 
 데이터 소스:
-  1. House Stock Watcher  — 미 하원 STOCK Act 공시 (housestockwatcher.com)
-  2. Senate Stock Watcher — 미 상원 STOCK Act 공시 (senatestockwatcher.com)
-  3. SEC EDGAR Form 4     — 상장사 내부자(임원·10%+ 주주) 거래 공시
+  1. QuiverQuant Congress Trading API — 미 의회(하원+상원) STOCK Act 공시
+  2. SEC EDGAR Form 4                — 상장사 내부자(임원·10%+ 주주) 거래 공시
 
 필터 기준:
   - 의회 의원: $15,001 이상 거래 (공시 최소 단위)
@@ -65,137 +64,100 @@ def _fmt_amount(val: int) -> str:
     return f'${val:,}'
 
 
-# ── 1. House Stock Watcher ────────────────────────────────────────────
+# ── 1. QuiverQuant Congress Trading API (하원+상원 통합) ──────────────
 
-def fetch_house_trades(days: int = 30) -> list[dict]:
+_QUIVER_CONGRESS_URL = 'https://api.quiverquant.com/beta/live/congresstrading'
+
+
+def fetch_congress_trades(days: int = 90) -> tuple[list[dict], list[dict]]:
     """
-    하원 STOCK Act 공시 수집.
-    반환: [{source, person, role, ticker, trade_type, amount_val, amount_str,
-             trade_date, filed_date, asset_description, party, state}]
+    QuiverQuant Congress Trading API로 의회(하원+상원) STOCK Act 공시 수집.
+    House 필드 기준으로 하원/상원 분리 반환.
+    반환: (house_list, senate_list)
     """
-    url = 'https://house-stock-watcher-data.s3-us-east-2.amazonaws.com/data/all_transactions.json'
     try:
-        r = requests.get(url, headers=_HEADERS, timeout=30)
+        r = requests.get(_QUIVER_CONGRESS_URL, headers=_HEADERS, timeout=30)
         r.raise_for_status()
         data = r.json()
     except Exception as e:
-        print(f'[블록딜] 하원 API 오류: {e}')
-        return []
+        print(f'[블록딜] QuiverQuant API 오류: {e}')
+        return [], []
 
     cutoff = (datetime.now() - timedelta(days=days)).strftime('%Y-%m-%d')
-    results = []
+    house_list = []
+    senate_list = []
 
     for tx in data:
-        trade_date = tx.get('transaction_date', '') or ''
-        # 날짜 파싱 (MM/DD/YYYY 또는 YYYY-MM-DD)
-        if '/' in trade_date:
-            try:
-                dt = datetime.strptime(trade_date, '%m/%d/%Y')
-                trade_date = dt.strftime('%Y-%m-%d')
-            except ValueError:
-                pass
-        if trade_date < cutoff:
+        # 거래일 기준 필터 (없으면 공시일 사용)
+        trade_date = (tx.get('TransactionDate') or tx.get('ReportDate') or '')[:10]
+        if not trade_date or trade_date < cutoff:
             continue
 
-        ticker = (tx.get('ticker') or '').strip().upper()
-        if not ticker or ticker in ('--', 'N/A', ''):
-            ticker = ''
-
-        amount_str = tx.get('amount', '') or ''
-        amount_val = _parse_amount(amount_str)
-        if amount_val < _MIN_AMOUNT:
-            continue
-
-        trade_type = tx.get('type', '') or ''
-        # 매수/매도 한글 변환
-        type_kr = _normalize_type(trade_type)
-
-        results.append({
-            'source':            'House',
-            'person':            tx.get('representative', ''),
-            'role':              '하원의원',
-            'party':             tx.get('party', ''),
-            'state':             tx.get('state', ''),
-            'ticker':            ticker,
-            'asset_description': tx.get('asset_description', ''),
-            'trade_type':        type_kr,
-            'trade_type_raw':    trade_type,
-            'amount_val':        amount_val,
-            'amount_str':        _fmt_amount(amount_val),
-            'amount_raw':        amount_str,
-            'trade_date':        trade_date,
-            'filed_date':        tx.get('disclosure_date', ''),
-            'district':          tx.get('district', ''),
-            'link':              tx.get('ptr_link', ''),
-        })
-
-    results.sort(key=lambda x: x['trade_date'], reverse=True)
-    return results
-
-
-# ── 2. Senate Stock Watcher ───────────────────────────────────────────
-
-def fetch_senate_trades(days: int = 30) -> list[dict]:
-    """
-    상원 STOCK Act 공시 수집.
-    반환: House와 동일 구조
-    """
-    url = 'https://senate-stock-watcher-data.s3-us-east-2.amazonaws.com/aggregate/all_transactions.json'
-    try:
-        r = requests.get(url, headers=_HEADERS, timeout=30)
-        r.raise_for_status()
-        data = r.json()
-    except Exception as e:
-        print(f'[블록딜] 상원 API 오류: {e}')
-        return []
-
-    cutoff = (datetime.now() - timedelta(days=days)).strftime('%Y-%m-%d')
-    results = []
-
-    for tx in data:
-        trade_date = tx.get('transaction_date', '') or ''
-        if '/' in trade_date:
-            try:
-                dt = datetime.strptime(trade_date, '%m/%d/%Y')
-                trade_date = dt.strftime('%Y-%m-%d')
-            except ValueError:
-                pass
-        if trade_date < cutoff:
-            continue
-
-        ticker = (tx.get('ticker') or '').strip().upper()
+        ticker = (tx.get('Ticker') or '').strip().upper()
         if ticker in ('--', 'N/A', ''):
             ticker = ''
 
-        amount_str = tx.get('amount', '') or ''
-        amount_val = _parse_amount(amount_str)
+        amount_raw = tx.get('Range') or ''
+        # QuiverQuant Amount 필드는 범위 하한값(숫자)
+        try:
+            amount_val = int(float(tx.get('Amount') or 0))
+        except (ValueError, TypeError):
+            amount_val = _parse_amount(amount_raw)
         if amount_val < _MIN_AMOUNT:
             continue
 
-        trade_type = tx.get('type', '') or ''
-        type_kr = _normalize_type(trade_type)
+        trade_type_raw = tx.get('Transaction') or ''
+        type_kr = _normalize_type(trade_type_raw)
 
-        results.append({
-            'source':            'Senate',
-            'person':            tx.get('senator', ''),
-            'role':              '상원의원',
-            'party':             tx.get('party', ''),
-            'state':             tx.get('state', ''),
+        chamber = (tx.get('House') or '').lower()
+        if 'senate' in chamber:
+            source = 'Senate'
+            role   = '상원의원'
+        else:
+            source = 'House'
+            role   = '하원의원'
+
+        record = {
+            'source':            source,
+            'person':            tx.get('Representative') or '',
+            'role':              role,
+            'party':             tx.get('Party') or '',
+            'state':             '',
             'ticker':            ticker,
-            'asset_description': tx.get('asset_description', ''),
+            'asset_description': ticker,
             'trade_type':        type_kr,
-            'trade_type_raw':    trade_type,
+            'trade_type_raw':    trade_type_raw,
             'amount_val':        amount_val,
             'amount_str':        _fmt_amount(amount_val),
-            'amount_raw':        amount_str,
+            'amount_raw':        amount_raw,
             'trade_date':        trade_date,
-            'filed_date':        tx.get('disclosure_date', ''),
+            'filed_date':        (tx.get('ReportDate') or '')[:10],
             'district':          '',
-            'link':              tx.get('ptr_link', ''),
-        })
+            'link':              '',
+            'excess_return':     tx.get('ExcessReturn'),
+            'price_change':      tx.get('PriceChange'),
+        }
 
-    results.sort(key=lambda x: x['trade_date'], reverse=True)
-    return results
+        if source == 'Senate':
+            senate_list.append(record)
+        else:
+            house_list.append(record)
+
+    house_list.sort(key=lambda x: x['trade_date'], reverse=True)
+    senate_list.sort(key=lambda x: x['trade_date'], reverse=True)
+    return house_list, senate_list
+
+
+def fetch_house_trades(days: int = 90) -> list[dict]:
+    """하원 거래만 반환 (하위 호환용)."""
+    house, _ = fetch_congress_trades(days=days)
+    return house
+
+
+def fetch_senate_trades(days: int = 90) -> list[dict]:
+    """상원 거래만 반환 (하위 호환용)."""
+    _, senate = fetch_congress_trades(days=days)
+    return senate
 
 
 # ── 3. SEC EDGAR Form 4 ───────────────────────────────────────────────
@@ -463,6 +425,44 @@ def _normalize_form4_code(code: str) -> str:
     return mapping.get((code or '').upper(), code or '기타')
 
 
+# ── 종목명 보강 ───────────────────────────────────────────────────────
+
+def _enrich_ticker_names(trades: list[dict]) -> None:
+    """yfinance로 ticker → company_name 보강. 인플레이스 수정."""
+    try:
+        import yfinance as yf
+    except ImportError:
+        return
+
+    unique = list({t['ticker'] for t in trades if t.get('ticker') and t['ticker'] not in ('--', '')})
+    if not unique:
+        return
+
+    name_map: dict[str, str] = {}
+    print(f'[블록딜] 종목명 조회 중 ({len(unique)}개)...')
+    for sym in unique:
+        try:
+            info = yf.Ticker(sym).fast_info
+            name = getattr(info, 'company_name', None) or ''
+            if not name:
+                info2 = yf.Ticker(sym).info
+                name = info2.get('shortName') or info2.get('longName') or ''
+            if name:
+                name_map[sym] = name
+            time.sleep(0.1)
+        except Exception:
+            pass
+
+    for t in trades:
+        sym = t.get('ticker', '')
+        if sym and sym in name_map:
+            t['company_name'] = name_map[sym]
+        else:
+            t.setdefault('company_name', '')
+
+    print(f'[블록딜] 종목명 보강: {len(name_map)}/{len(unique)}개 성공')
+
+
 # ── 통합 수집 ────────────────────────────────────────────────────────
 
 def fetch_all_block_deals(days: int = 30) -> dict:
@@ -476,15 +476,9 @@ def fetch_all_block_deals(days: int = 30) -> dict:
         'summary': {total, buy_count, sell_count, top_tickers: [...]}
     }
     """
-    print('[블록딜] 하원 거래 수집 중...')
-    house = fetch_house_trades(days=days)
-    print(f'[블록딜] 하원 {len(house)}건')
-
-    time.sleep(1)
-
-    print('[블록딜] 상원 거래 수집 중...')
-    senate = fetch_senate_trades(days=days)
-    print(f'[블록딜] 상원 {len(senate)}건')
+    print('[블록딜] 의회 거래 수집 중 (QuiverQuant)...')
+    house, senate = fetch_congress_trades(days=days)
+    print(f'[블록딜] 하원 {len(house)}건 | 상원 {len(senate)}건')
 
     time.sleep(1)
 
@@ -493,6 +487,9 @@ def fetch_all_block_deals(days: int = 30) -> dict:
     print(f'[블록딜] Form4 {len(form4)}건')
 
     all_trades = house + senate + form4
+
+    # 종목명 보강 (yfinance)
+    _enrich_ticker_names(all_trades)
 
     # 요약 통계
     buy_count  = sum(1 for t in all_trades if t['trade_type'] == '매수')
@@ -524,13 +521,24 @@ def fetch_all_block_deals(days: int = 30) -> dict:
 
 
 if __name__ == '__main__':
-    result = fetch_all_block_deals(days=14)
+    import os, sys
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from dotenv import load_dotenv
+    load_dotenv(os.path.join(os.path.dirname(__file__), '.env'))
+    import database
+    database.init_db()
+
+    result = fetch_all_block_deals(days=90)
     s = result['summary']
     print(f"\n[블록딜 요약] 총 {s['total']}건 | 매수 {s['buy_count']} | 매도 {s['sell_count']}")
     print(f"  하원 {s['house_count']} | 상원 {s['senate_count']} | Form4 {s['form4_count']}")
     print(f"  상위 티커: {', '.join(s['top_tickers'])}")
 
+    today = datetime.now().strftime('%Y-%m-%d')
+    database.save_block_deals(today, result)
+    print(f"\n[블록딜] DB 저장 완료 ({today})")
+
     print("\n[최근 5건]")
-    all_trades = result['house'][:2] + result['senate'][:2] + result['form4'][:1]
+    all_trades = result['house'][:3] + result['senate'][:1] + result['form4'][:1]
     for t in all_trades:
         print(f"  {t['source']} | {t['person']} | {t.get('ticker','?')} | {t['trade_type']} | {t['amount_str']} | {t['trade_date']}")

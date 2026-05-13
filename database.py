@@ -17,25 +17,25 @@ DB_FILE = os.path.join(DIR, "stocks.db")
 
 _DEFAULT_CONFIGS: dict[str, dict] = {
     "골삼이": {
-        "window": 25,          # 최근 N일 이내 대양봉 탐색 기간
+        "window": 20,          # 최근 N일 이내 대양봉 탐색 기간 (25→20)
         "big_pct": 0.15,       # 대양봉 최소 등락률
         "vol_mult": 10.0,      # 대양봉 거래량 배수 (20MA 대비)
-        "price_tol": 0.05,     # 대양봉 시가 근접 허용 오차 (±N%)
-        "ma_tol": 0.05,        # 20MA 근접 허용 오차 (±N%)
-        "vol_dec": 0.5,        # 대양봉 이후 거래량 감소 비율 기준
-        "conf_base": 70,       # 기본 신뢰도
+        "price_tol": 0.03,     # 대양봉 시가 근접 허용 오차 ±3% (완화 5%→3%)
+        "ma_tol": 0.03,        # 20MA 근접 허용 오차 ±3% (완화 5%→3%)
+        "vol_dec": 0.4,        # 대양봉 이후 거래량 감소 비율 (50%→40%)
+        "conf_base": 75,       # 기본 신뢰도 (70→75)
         "conf_near2": 15,      # 시가 2% 이내 신뢰도 가산점
-        "conf_near35": 8,      # 시가 3.5% 이내 신뢰도 가산점
+        "conf_near35": 8,      # 시가 3% 이내 신뢰도 가산점
         "conf_big29": 10,      # 대양봉 +29% 이상 가산점
         "conf_slope": 7,       # 20MA 기울기 2% 이상 가산점
     },
     "골든샘플": {
-        "window": 15,          # 최근 N일 이내 대양봉 탐색 기간
+        "window": 12,          # 최근 N일 이내 대양봉 탐색 기간 (15→12)
         "big_pct": 0.15,       # 대양봉 최소 등락률
         "vol_mult": 10.0,      # 대양봉 거래량 배수
-        "vol_dried": 0.2,      # 거래량 고갈 기준 (대양봉 대비 비율)
-        "price_hold": 0.90,    # 대양봉 이후 종가 유지 기준
-        "min_after": 5,        # 대양봉 이후 최소 경과 일수
+        "vol_dried": 0.15,     # 거래량 고갈 기준 (20%→15%)
+        "price_hold": 0.93,    # 대양봉 이후 종가 유지 기준 (90%→93%)
+        "min_after": 7,        # 대양봉 이후 최소 경과 일수 (5→7)
         "conf_base": 80,       # 기본 신뢰도
         "conf_days10": 8,      # 경과 10일 이상 가산점
         "conf_big29": 7,       # 대양봉 +29% 이상 가산점
@@ -43,73 +43,58 @@ _DEFAULT_CONFIGS: dict[str, dict] = {
     "레드삼각": {
         "box_start": 90,       # 박스권 탐색 시작 (N일 전)
         "box_end": 60,         # 박스권 탐색 끝 (N일 전)
-        "box_spread": 0.15,    # 박스권 고저 편차 허용 기준
+        "box_spread": 0.10,    # 박스권 고저 편차 허용 기준 (15%→10%)
         "break_start": 60,     # 돌파 구간 시작 (N일 전)
         "break_end": 20,       # 돌파 구간 끝 (N일 전)
-        "min_big": 2,          # 돌파 구간 최소 대양봉 수
-        "ma_tol": 0.05,        # 60MA 근접 허용 오차 (±N%)
-        "box_top_pct": 0.93,   # 박스권 상단 대비 현재가 최소 비율
-        "conf_base": 75,       # 기본 신뢰도
+        "min_big": 3,          # 돌파 구간 최소 대양봉 수 (2→3)
+        "ma_tol": 0.03,        # 60MA 근접 허용 오차 ±3% (5%→3%)
+        "box_top_pct": 0.95,   # 박스권 상단 대비 현재가 최소 비율 (93%→95%)
+        "conf_base": 78,       # 기본 신뢰도 (75→78)
         "conf_3candles": 10,   # 대양봉 3개 이상 가산점
         "conf_near_ma60": 8,   # 60MA 2% 이내 근접 가산점
     },
-    "골삼이(상승초입)": {
-        "window": 5,            # 대양봉 탐색 기간 (최근 N 거래일)
-        "big_pct": 0.05,        # 대양봉 최소 등락률 (5%)
-        "body_ratio": 0.60,     # 대양봉 몸통 비율 기준 (60% 이상)
-        "vol_mult": 3.0,        # 거래량 급증 배수, 20MA 대비
-        "ma20_cross_tol": 0.03, # 장대양봉 저가 vs 예상 20MA 근접 허용 오차 (±3%)
-        "proj_days_min": 3,     # 골든크로스 예상 최소 일수
-        "proj_days_max": 15,    # 골든크로스 예상 최대 일수
-        "ma240_flat_tol": 0.005, # 240MA 하락 판정 임계값 (0.5%)
-        "price_surge_limit": 0.50, # 20거래일 전 3일 평균가 대비 현재가 최대 상승 한도 (50%)
-        "conf_base": 72,        # 기본 신뢰도
-        "conf_body60": 8,       # 몸통 60% 이상 시 가산점
-        "conf_vol5x": 8,        # 거래량 5배 이상 시 가산점
-        "conf_near_ma20": 10,   # 현재가 20MA ±1.5% 이내 시 가산점
-    },
     "MA압축지지": {
-        "base_candle_lookback": 60,   # 장대양봉 탐색 기간 (최근 N 거래일)
-        "big_pct": 0.07,              # 장대양봉 최소 등락률 (7%)
+        "base_candle_lookback": 50,   # 장대양봉 탐색 기간 (60→50일)
+        "big_pct": 0.10,              # 장대양봉 최소 등락률 (7%→10%)
         "body_ratio": 0.60,           # 장대양봉 몸통 비율 기준 (60% 이상)
-        "vol_mult": 2.0,              # 장대양봉 거래량 배수, 20MA 대비
+        "vol_mult": 4.0,              # 장대양봉 거래량 배수 (2.0→4.0배)
         "ma20_approach_days_min": 3,  # MA20 접근 확인 최소 경과 일수
-        "ma20_approach_days_max": 30, # MA20 접근 확인 최대 경과 일수
-        "ma20_near_bottom_tol": 0.03, # MA20 vs 장대 저가 근접 허용 오차 (±3%)
-        "ma20_slope_min": 0.001,      # MA20 최소 기울기 (0.1%/일, 우상향)
-        "atr_ratio_max": 0.015,       # ATR / 현재가 최대 비율 (1.5%)
-        "vol_shrink_ratio": 0.5,      # 현재 거래량 ≤ 장대 거래량 × N
+        "ma20_approach_days_max": 25, # MA20 접근 확인 최대 경과 일수 (30→25)
+        "ma20_near_bottom_tol": 0.02, # MA20 vs 장대 저가 근접 허용 오차 ±2% (3%→2%)
+        "ma20_slope_min": 0.002,      # MA20 최소 기울기 (0.1%→0.2%/일)
+        "atr_ratio_max": 0.012,       # ATR / 현재가 최대 비율 (1.5%→1.2%)
+        "vol_shrink_ratio": 0.4,      # 현재 거래량 ≤ 장대 거래량 × N (50%→40%)
         "box_days_min": 5,            # 박스권 최소 확인 일수
-        "box_days_max": 30,           # 박스권 최대 확인 일수
-        "box_range_pct": 0.08,        # 박스권 허용 등락 범위 (8% 이내)
-        "ma20_ma60_conv_tol": 0.03,   # |MA20 - MA60| / 가격 최대 허용치 (3%)
-        "conf_base": 72,              # 기본 신뢰도
+        "box_days_max": 25,           # 박스권 최대 확인 일수 (30→25)
+        "box_range_pct": 0.06,        # 박스권 허용 등락 범위 (8%→6%)
+        "ma20_ma60_conv_tol": 0.025,  # |MA20 - MA60| / 가격 최대 허용치 (3%→2.5%)
+        "conf_base": 76,              # 기본 신뢰도 (72→76)
         "conf_ma20_close": 10,        # MA20이 장대 저가 1% 이내 시 가산점
         "conf_big15": 8,              # 장대 +15% 이상 시 가산점
         "conf_near_ma20": 7,          # 현재가 MA20 1% 이내 시 가산점
     },
     "텐배거": {
         # ── STEP 1: 시장 리더 ──────────────────────────────────────
-        "rs_6m_min":          0.20,   # 6개월 절대 수익률 최소 (RS 80퍼센타일 프록시)
-        "rs_3m_min":          0.10,   # 3개월 절대 수익률 최소 (RS 70퍼센타일 프록시)
+        "rs_6m_min":          0.25,   # 6개월 절대 수익률 최소 (20%→25%)
+        "rs_3m_min":          0.12,   # 3개월 절대 수익률 최소 (10%→12%)
         # ── STEP 2: VCP 베이스 ─────────────────────────────────────
-        "big_move_pct":       0.35,   # 120일 저점 대비 최소 상승폭 (35%)
+        "big_move_pct":       0.40,   # 120일 저점 대비 최소 상승폭 (35%→40%)
         "big_move_lookback":  120,    # 저점 탐색 기간 (거래일)
         "base_days_min":      10,     # 베이스 최소 기간 (거래일)
-        "base_days_max":      35,     # 베이스 최대 기간 (거래일)
-        "base_range_pct":     0.12,   # 베이스 허용 등락폭 (12%)
-        "atr_contract":       0.75,   # ATR20_현재 / ATR20_이전 최대 비율
-        "vol_contract":       0.70,   # vol10 / vol50 최대 비율 (거래량 수축 기준)
+        "base_days_max":      30,     # 베이스 최대 기간 (35→30)
+        "base_range_pct":     0.10,   # 베이스 허용 등락폭 (12%→10%)
+        "atr_contract":       0.70,   # ATR20_현재 / ATR20_이전 최대 비율 (0.75→0.70)
+        "vol_contract":       0.60,   # vol10 / vol50 최대 비율 (0.70→0.60)
         # ── STEP 3: 위치 ───────────────────────────────────────────
-        "high52w_ratio":      0.90,   # 현재가 ≥ 52주 고점 × N
-        "high60d_ratio":      0.92,   # 현재가 ≥ 60일 고점 × N
-        "ma20_near_tol":      0.04,   # MA20 근접 허용 오차 (±4%)
-        "ma50_near_tol":      0.06,   # MA50 근접 허용 오차 (±6%)
+        "high52w_ratio":      0.92,   # 현재가 ≥ 52주 고점 × N (90%→92%)
+        "high60d_ratio":      0.93,   # 현재가 ≥ 60일 고점 × N (92%→93%)
+        "ma20_near_tol":      0.03,   # MA20 근접 허용 오차 ±3% (4%→3%)
+        "ma50_near_tol":      0.05,   # MA50 근접 허용 오차 ±5% (6%→5%)
         # ── STEP 4: 돌파 트리거 ────────────────────────────────────
-        "brkout_vol_mult":    1.8,    # 베이스 상단 돌파 거래량 배수 (vol50 대비)
-        "brkout52w_vol_mult": 1.5,    # 52주 신고가 돌파 거래량 배수
+        "brkout_vol_mult":    2.0,    # 베이스 상단 돌파 거래량 배수 (1.8→2.0)
+        "brkout52w_vol_mult": 1.8,    # 52주 신고가 돌파 거래량 배수 (1.5→1.8)
         # ── 신뢰도 ─────────────────────────────────────────────────
-        "conf_base":          70,     # 기본 신뢰도
+        "conf_base":          75,     # 기본 신뢰도 (70→75)
         "conf_breakout":      18,     # 거래량 동반 돌파 확인 시 가산점
         "conf_atr_strong":    8,      # ATR 40%+ 수축 시 가산점
         "conf_vol_strong":    7,      # vol10/vol50 < 0.50 극도 수축 시 가산점
@@ -457,13 +442,39 @@ def init_db() -> None:
                 created_at TEXT DEFAULT (datetime('now', 'localtime'))
             );
 
+            CREATE TABLE IF NOT EXISTS champion (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                date            TEXT NOT NULL,
+                ticker          TEXT NOT NULL,
+                name            TEXT NOT NULL,
+                market          TEXT NOT NULL DEFAULT 'KR',
+                pattern         TEXT NOT NULL,
+                conf            INTEGER NOT NULL,
+                champion_score  REAL NOT NULL,
+                current_price   INTEGER NOT NULL DEFAULT 0,
+                entry_low       INTEGER NOT NULL DEFAULT 0,
+                entry_high      INTEGER NOT NULL DEFAULT 0,
+                stop_loss       INTEGER NOT NULL DEFAULT 0,
+                target_price    INTEGER NOT NULL DEFAULT 0,
+                week52_high     INTEGER NOT NULL DEFAULT 0,
+                streak          INTEGER NOT NULL DEFAULT 1,
+                created_at      TEXT DEFAULT (datetime('now', 'localtime'))
+            );
+
             CREATE INDEX IF NOT EXISTS idx_semi_risk_date ON semi_risk_snapshots(date);
             CREATE INDEX IF NOT EXISTS idx_liquidity_date ON liquidity_snapshots(date);
             CREATE INDEX IF NOT EXISTS idx_short_radar_date ON short_radar(date);
             CREATE INDEX IF NOT EXISTS idx_smart_money_cik ON smart_money(cik);
             CREATE INDEX IF NOT EXISTS idx_block_deals_date ON block_deals(fetch_date);
             CREATE INDEX IF NOT EXISTS idx_etf_flows_date ON etf_flows(date);
+            CREATE INDEX IF NOT EXISTS idx_champion_date ON champion(date);
         """)
+    # champion 마이그레이션: breakdown 컬럼 추가
+    with _connect() as conn:
+        cols = [r[1] for r in conn.execute("PRAGMA table_info(champion)").fetchall()]
+        if 'breakdown' not in cols:
+            conn.execute("ALTER TABLE champion ADD COLUMN breakdown TEXT NOT NULL DEFAULT '{}'")
+
     # scan_results 마이그레이션: market 컬럼 추가
     with _connect() as conn:
         cols = [r[1] for r in conn.execute("PRAGMA table_info(scan_results)").fetchall()]
@@ -1739,3 +1750,128 @@ def get_semi_risk_latest() -> dict | None:
     except Exception:
         data = {}
     return {"date": row["date"], "data": data, "created_at": row["created_at"]}
+
+
+# ── 챔피언 ────────────────────────────────────────────────────────────
+
+def _parse_champion(row) -> dict:
+    import json as _json
+    d = dict(row)
+    try:
+        d["breakdown"] = _json.loads(d.get("breakdown") or "{}")
+    except Exception:
+        d["breakdown"] = {}
+    return d
+
+
+def get_current_champion() -> dict | None:
+    """현재 챔피언 조회 (가장 최근 레코드)."""
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM champion ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+    if not row:
+        return None
+    return _parse_champion(row)
+
+
+def get_champion_history(limit: int = 30) -> list[dict]:
+    """챔피언 이력 조회."""
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT * FROM champion ORDER BY id DESC LIMIT ?", (limit,)
+        ).fetchall()
+    return [_parse_champion(r) for r in rows]
+
+
+def get_champion_history_full(limit: int = 60) -> list[dict]:
+    """역대 챔피언 + 최신가 + 수익률 포함."""
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT * FROM champion ORDER BY id DESC LIMIT ?", (limit,)
+        ).fetchall()
+        result = []
+        for row in rows:
+            d = _parse_champion(row)
+            detect_price = d.get("current_price", 0)
+            latest_price = 0
+            return_pct = None
+            if detect_price > 0:
+                price_row = conn.execute(
+                    "SELECT current_price FROM scan_results WHERE ticker=? ORDER BY scanned_at DESC LIMIT 1",
+                    (d["ticker"],)
+                ).fetchone()
+                if price_row and price_row[0]:
+                    latest_price = int(price_row[0])
+                    return_pct = round((latest_price - detect_price) / detect_price * 100, 1)
+            d["latest_price"] = latest_price
+            d["return_pct"] = return_pct
+            result.append(d)
+    return result
+
+
+def update_champion(result: dict) -> dict:
+    """
+    새 스캔 결과(result)와 현재 챔피언을 비교해 필요 시 교체.
+    - 더 높은 점수의 다른 종목 발견 → 교체 (streak=1)
+    - 같은 종목이 오늘 다시 최고 → streak + 1
+    - 현재 챔피언이 여전히 우위 → 유지 (변경 없음)
+    반환: 업데이트된 champion dict
+    """
+    from datetime import datetime as _dt
+    today = _dt.now().strftime("%Y-%m-%d")
+    new_score = float(result.get("champion_score", 0.0))
+    cur = get_current_champion()
+
+    if not cur:
+        # 최초 챔피언
+        _save_champion(result, streak=1, today=today)
+        return get_current_champion()
+
+    cur_score = float(cur.get("champion_score", 0.0))
+    cur_date  = cur.get("date", "")
+    cur_ticker = cur.get("ticker", "")
+
+    if result["ticker"] == cur_ticker:
+        # 같은 종목: 날짜가 바뀌었으면 streak +1, 아니면 점수만 갱신
+        streak = cur.get("streak", 1) + (1 if cur_date != today else 0)
+        if new_score >= cur_score or cur_date != today:
+            _save_champion(result, streak=streak, today=today)
+    elif new_score > cur_score:
+        # 더 강한 새 종목 발견 → 교체
+        _save_champion(result, streak=1, today=today)
+
+    return get_current_champion()
+
+
+def _save_champion(result: dict, streak: int, today: str) -> None:
+    import json as _json
+    entry = result.get("entry")
+    entry_low  = entry[0] if isinstance(entry, (list, tuple)) and len(entry) >= 2 else 0
+    entry_high = entry[1] if isinstance(entry, (list, tuple)) and len(entry) >= 2 else 0
+    breakdown_json = _json.dumps(result.get("champion_breakdown") or {}, ensure_ascii=False)
+    with _connect() as conn:
+        conn.execute(
+            """INSERT INTO champion
+               (date, ticker, name, market, pattern, conf, champion_score,
+                current_price, entry_low, entry_high, stop_loss, target_price,
+                week52_high, streak, breakdown)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (
+                today,
+                result.get("ticker", ""),
+                result.get("name", ""),
+                result.get("market", "KR"),
+                result.get("pattern", ""),
+                int(result.get("conf", 0)),
+                round(float(result.get("champion_score", 0.0)), 1),
+                int(result.get("current", 0)),
+                int(entry_low),
+                int(entry_high),
+                int(result.get("stop", 0)),
+                int(result.get("target", 0)),
+                int(result.get("week52_high", 0)),
+                int(streak),
+                breakdown_json,
+            ),
+        )

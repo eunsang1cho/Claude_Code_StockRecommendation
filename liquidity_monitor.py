@@ -9,7 +9,8 @@ FRED API로 유동성 지표 수집
   WRESBAL    - 은행 지준 (B$)
   WTREGEN    - TGA 잔고 (M$ → B$)
 
-종합 유동성 = WALCL + WRESBAL − RRPONTSYD − WTREGEN (B$)
+종합 유동성 = WALCL + WRESBAL + M2SL*0.3 − RRPONTSYD − WTREGEN (B$)
+M2는 간접 영향(신용 창출)이므로 30% 가중치 적용
 스케줄: 매일 06:00
 """
 
@@ -84,9 +85,10 @@ def fetch_liquidity_historical(api_key: str, periods: int = 13) -> list[dict]:
         rrp       = nearest_val(rrp_obs, date)
         tga_r     = nearest_val(tga_obs, date)
 
-        if None in (wresbal_r, rrp, tga_r):
+        if None in (wresbal_r, tga_r):
             continue
 
+        rrp       = rrp if rrp is not None else 0.0
         wresbal_b = wresbal_r / 1000
         tga_b     = tga_r / 1000
         total     = round(walcl_b + wresbal_b - rrp - tga_b, 1)
@@ -172,17 +174,23 @@ def fetch_liquidity(api_key: str) -> dict:
             'unit': 'B$', 'label': 'TGA 잔고',
         }
 
-    # 종합 유동성 = WALCL + WRESBAL - RRPONTSYD - WTREGEN (B$)
+    # 종합 유동성 = WALCL + WRESBAL + M2SL*0.3 - RRPONTSYD - WTREGEN (B$)
+    # M2는 간접 영향이므로 30% 가중; RRP 없으면 0으로 대체 (FRED API 장애 대응)
     total = total_prev = None
-    needed = ('walcl', 'wresbal', 'rrp', 'tga')
-    if all(k in raw for k in needed):
+    core = ('walcl', 'wresbal', 'tga')
+    if all(k in raw for k in core):
+        rrp_val  = raw['rrp']['value']  if 'rrp' in raw else 0.0
+        rrp_prev = raw['rrp']['prev']   if 'rrp' in raw else 0.0
+        m2_val   = raw['m2sl']['value'] * 0.3 if 'm2sl' in raw else 0.0
+        m2_prev  = (raw['m2sl']['prev'] * 0.3
+                    if 'm2sl' in raw and raw['m2sl']['prev'] is not None else 0.0)
         total = round(
-            raw['walcl']['value'] + raw['wresbal']['value']
-            - raw['rrp']['value'] - raw['tga']['value'], 1
+            raw['walcl']['value'] + raw['wresbal']['value'] + m2_val
+            - rrp_val - raw['tga']['value'], 1
         )
-        pvs = [raw[k]['prev'] for k in needed]
+        pvs = [raw[k]['prev'] for k in core]
         if all(p is not None for p in pvs):
-            total_prev = round(pvs[0] + pvs[1] - pvs[2] - pvs[3], 1)
+            total_prev = round(pvs[0] + pvs[1] + m2_prev - (rrp_prev or 0) - pvs[2], 1)
 
     direction = None
     if total is not None and total_prev is not None:
