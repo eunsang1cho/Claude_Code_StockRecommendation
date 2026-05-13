@@ -52,9 +52,9 @@ STATUS_THRESHOLDS = {
     # gold: 2026년 기준 현실적 임계값 ($5000대 시장 반영)
     # 금이 이미 구조적 고가 → 급등률(MoM%)이 진짜 신호; 절대값은 상한선만 제한
     'gold':        lambda v: _status_above(v, [(4500,'위험'),(3800,'경고'),(3300,'관망'),(3000,'긍정')]),
-    # 새 지표 (낮을수록 위험)
-    'btc':         lambda v: _status_below(v, [(55000,'위험'),(70000,'경고'),(85000,'관망')],
-                             default='긍정' if v < 95000 else '최상'),
+    # 새 지표 (낮을수록 위험) — 2026년 현실화 임계값
+    'btc':         lambda v: _status_below(v, [(25000,'위험'),(35000,'경고'),(50000,'관망')],
+                             default='긍정' if v < 65000 else ('관망' if v < 80000 else '최상')),
     'nasdaq':      None,  # MoM 변화율로 계산 — fetch_yahoo_all에서 직접 처리
     # CMS 연동 지표
     'brent':       lambda v: _status_above(v, [(95,'위험'),(85,'경고'),(75,'관망'),(65,'긍정')]),
@@ -62,6 +62,8 @@ STATUS_THRESHOLDS = {
     'ust2y':       lambda v: _status_above(v, [(5.0,'위험'),(4.5,'경고'),(4.0,'관망'),(3.5,'긍정')]),
     'kre':         None,  # MoM 변화율로 계산
     'xlf':         None,  # MoM 변화율로 계산
+    'kospi':       None,  # MoM 변화율로 계산
+    'kosdaq':      None,  # MoM 변화율로 계산
     # fear_greed: CNN F&G (0=극단공포,100=극단탐욕) — 역발상 지표
     # 75↑ 극단탐욕=과열위험, 25↓ 극단공포=역발상매수기회(최상)
     'fear_greed':  lambda v: ('위험' if v >= 75 else '경고' if v >= 55 else
@@ -83,7 +85,7 @@ YAHOO_SYMBOLS = {
     'usd_krw': 'KRW=X',    # 1 USD → KRW
     'us10y':   '^TNX',     # 10년 국채 금리 (%)
     'wti':     'CL=F',     # WTI 선물
-    'soxx':    'SOXX',     # 필라델피아 반도체
+    'soxx':    'SOXX',     # 필라델피아 반도체 (MoM)
     'btc':     'BTC-USD',  # 비트코인 (위험선호 지표)
     'vix':     '^VIX',     # CBOE 변동성 (공포 지표)
     'nasdaq':  '^IXIC',    # 나스닥 종합
@@ -93,6 +95,9 @@ YAHOO_SYMBOLS = {
     'dxy':     'DX-Y.NYB', # 달러 인덱스
     'kre':     'KRE',      # 미국 지역은행 ETF (MoM)
     'xlf':     'XLF',      # 미국 금융섹터 ETF (MoM)
+    # 국장 모멘텀
+    'kospi':   '^KS11',    # KOSPI 지수 (MoM)
+    'kosdaq':  '^KQ11',    # KOSDAQ 지수 (MoM)
 }
 
 def _yahoo_latest(symbol: str, realtime: bool = False) -> float | None:
@@ -129,28 +134,33 @@ def fetch_yahoo_realtime() -> dict:
     fetch_yahoo_all() 과 동일 구조 반환.
     """
     # 히스토리(1개월 비교) 필요 심볼은 일봉 유지
-    hist_keys = {'nasdaq', 'kre', 'xlf'}
+    hist_keys = {'nasdaq', 'kre', 'xlf', 'soxx', 'kospi', 'kosdaq'}
 
     result = {}
     for key, sym in YAHOO_SYMBOLS.items():
         if key in hist_keys:
-            closes = _yahoo_history(sym, '1mo')
+            closes = _yahoo_history(sym, '6mo')
             if not closes:
                 continue
-            v = round(closes[-1], 2)
             if key == 'nasdaq':
                 v_r, status = _nasdaq_status(closes)
-                pct = (v_r - closes[0]) / closes[0] * 100
+                idx_1mo = max(0, len(closes) - 22)
+                pct = (v_r - closes[idx_1mo]) / closes[idx_1mo] * 100 if closes[idx_1mo] else 0
                 result[key] = {'value': v_r, 'status': status, 'note': f'나스닥 {v_r:,.0f} (1개월 {pct:+.1f}%)'}
-            else:
-                pct = round((v - closes[0]) / closes[0] * 100, 1)
-                if pct >= 10: status = '최상'
-                elif pct >= 4: status = '긍정'
-                elif pct >= 0: status = '관망'
-                elif pct >= -5: status = '경고'
-                else: status = '위험'
+            elif key in ('kre', 'xlf'):
                 label = 'KRE 지역은행' if key == 'kre' else 'XLF 금융'
-                result[key] = {'value': v, 'status': status, 'note': f'{label} ${v:.2f} (1개월 {pct:+.1f}%)'}
+                r = _mom_etf_status(closes, label)
+                if r:
+                    result[key] = r
+            elif key == 'soxx':
+                r = _soxx_status(closes)
+                if r:
+                    result[key] = r
+            elif key in ('kospi', 'kosdaq'):
+                label = 'KOSPI' if key == 'kospi' else 'KOSDAQ'
+                r = _kr_index_status(closes, label)
+                if r:
+                    result[key] = r
         else:
             # 5분봉 장중 현재가
             price = _yahoo_latest(sym, realtime=True)
@@ -187,8 +197,6 @@ def fetch_yahoo_realtime() -> dict:
                 note = f'미 국채 10년 {v:.3f}%'
             elif key == 'wti':
                 note = f'WTI ${v:.2f}/배럴'
-            elif key == 'soxx':
-                note = f'SOXX ${v:.2f}'
 
             result[key] = {
                 'value':  v,
@@ -216,31 +224,150 @@ def _yahoo_history(symbol: str, range_: str = '1mo') -> list[float]:
 
 
 def _nasdaq_status(closes: list[float]) -> tuple[float, str]:
-    """나스닥 MoM 변화율 기반 상태"""
+    """나스닥 1개월 + 3개월 모멘텀 조합 상태.
+    closes는 6mo 기간 데이터 (약 126 거래일).
+    1개월(21영업일) 기준 상태를 먼저 산출, 3개월(63영업일) 이 경고 이하면 관망으로 올림.
+    """
     if len(closes) < 2:
         return (closes[-1] if closes else 0), '관망'
     current = closes[-1]
-    month_ago = closes[0]
-    pct = (current - month_ago) / month_ago * 100
-    if pct >= 5:    status = '최상'
-    elif pct >= 2:  status = '긍정'
-    elif pct >= 0:  status = '관망'
-    elif pct >= -3: status = '경고'
-    else:           status = '위험'
+
+    # 1개월 기준 (마지막 21 거래일)
+    idx_1mo = max(0, len(closes) - 22)
+    month_ago = closes[idx_1mo]
+    pct_1mo = (current - month_ago) / month_ago * 100
+
+    if pct_1mo >= 5:    status_1mo = '최상'
+    elif pct_1mo >= 2:  status_1mo = '긍정'
+    elif pct_1mo >= 0:  status_1mo = '관망'
+    elif pct_1mo >= -3: status_1mo = '경고'
+    else:               status_1mo = '위험'
+
+    # 3개월 기준 (마지막 63 거래일)
+    idx_3mo = max(0, len(closes) - 64)
+    three_ago = closes[idx_3mo]
+    pct_3mo = (current - three_ago) / three_ago * 100
+
+    if pct_3mo >= 8:    status_3mo = '최상'
+    elif pct_3mo >= 3:  status_3mo = '긍정'
+    elif pct_3mo >= 0:  status_3mo = '관망'
+    elif pct_3mo >= -5: status_3mo = '경고'
+    else:               status_3mo = '위험'
+
+    _RANK = {'최상': 4, '긍정': 3, '관망': 2, '경고': 1, '위험': 0}
+    # 1개월이 긍정/최상이어도 3개월이 경고 이하면 관망으로 조정
+    if _RANK[status_1mo] >= _RANK['긍정'] and _RANK[status_3mo] <= _RANK['경고']:
+        status = '관망'
+    else:
+        status = status_1mo
+
     return round(current, 0), status
+
+
+def _mom_etf_status(closes: list[float], label: str) -> dict:
+    """KRE/XLF용 1개월+3개월 모멘텀 조합 상태 계산.
+    closes: 6mo 기간 데이터.
+    """
+    if not closes:
+        return {}
+    v = round(closes[-1], 2)
+
+    # 1개월 (21 거래일)
+    idx_1mo = max(0, len(closes) - 22)
+    pct_1mo = round((v - closes[idx_1mo]) / closes[idx_1mo] * 100, 1) if closes[idx_1mo] else 0
+
+    # 3개월 (63 거래일)
+    idx_3mo = max(0, len(closes) - 64)
+    pct_3mo = round((v - closes[idx_3mo]) / closes[idx_3mo] * 100, 1) if closes[idx_3mo] else 0
+
+    if   pct_1mo >= 10: status_1mo = '최상'
+    elif pct_1mo >= 4:  status_1mo = '긍정'
+    elif pct_1mo >= 0:  status_1mo = '관망'
+    elif pct_1mo >= -5: status_1mo = '경고'
+    else:               status_1mo = '위험'
+
+    if   pct_3mo >= 15: status_3mo = '최상'
+    elif pct_3mo >= 6:  status_3mo = '긍정'
+    elif pct_3mo >= 0:  status_3mo = '관망'
+    elif pct_3mo >= -8: status_3mo = '경고'
+    else:               status_3mo = '위험'
+
+    _RANK = {'최상': 4, '긍정': 3, '관망': 2, '경고': 1, '위험': 0}
+    if _RANK[status_1mo] >= _RANK['긍정'] and _RANK[status_3mo] <= _RANK['경고']:
+        status = '관망'
+    else:
+        status = status_1mo
+
+    return {
+        'value':  v,
+        'status': status,
+        'note':   f'{label} ${v:.2f} (1개월 {pct_1mo:+.1f}%, 3개월 {pct_3mo:+.1f}%)',
+    }
+
+
+def _soxx_status(closes: list[float]) -> dict:
+    """SOXX 1개월+3개월 모멘텀 기반 상태 계산."""
+    if not closes:
+        return {}
+    v = round(closes[-1], 2)
+    idx_1mo = max(0, len(closes) - 22)
+    pct_1mo = round((v - closes[idx_1mo]) / closes[idx_1mo] * 100, 1) if closes[idx_1mo] else 0
+    idx_3mo = max(0, len(closes) - 64)
+    pct_3mo = round((v - closes[idx_3mo]) / closes[idx_3mo] * 100, 1) if closes[idx_3mo] else 0
+
+    # MoM 기반 경보 (절대값 임계보다 우선)
+    if   pct_1mo <= -15: status = '위험'
+    elif pct_1mo <= -8:  status = '경고'
+    elif pct_1mo <= -3:  status = '관망'
+    elif pct_1mo >= 10:  status = '최상'
+    elif pct_1mo >= 4:   status = '긍정'
+    else:
+        # MoM 중립이면 절대값 임계 사용
+        fn = STATUS_THRESHOLDS.get('soxx')
+        status = fn(v) if fn else '관망'
+
+    return {
+        'value':   v,
+        'status':  status,
+        'note':    f'SOXX ${v:.2f} (1개월 {pct_1mo:+.1f}%, 3개월 {pct_3mo:+.1f}%)',
+        'mom_1mo': pct_1mo,
+        'mom_3mo': pct_3mo,
+    }
+
+
+def _kr_index_status(closes: list[float], label: str) -> dict:
+    """KOSPI/KOSDAQ 1개월 모멘텀 기반 상태."""
+    if not closes:
+        return {}
+    v = round(closes[-1], 1)
+    idx_1mo = max(0, len(closes) - 22)
+    pct_1mo = round((v - closes[idx_1mo]) / closes[idx_1mo] * 100, 1) if closes[idx_1mo] else 0
+
+    if   pct_1mo >= 5:    status = '최상'
+    elif pct_1mo >= 2:    status = '긍정'
+    elif pct_1mo >= 0:    status = '관망'
+    elif pct_1mo >= -3:   status = '경고'
+    else:                 status = '위험'
+
+    return {
+        'value':   v,
+        'status':  status,
+        'note':    f'{label} {v:,.1f} (1개월 {pct_1mo:+.1f}%)',
+        'mom_1mo': pct_1mo,
+    }
 
 
 def fetch_yahoo_all() -> dict:
     result = {}
     for key, sym in YAHOO_SYMBOLS.items():
         if key == 'nasdaq':
-            closes = _yahoo_history(sym, '1mo')
+            closes = _yahoo_history(sym, '6mo')  # 3개월 모멘텀 계산용
             if not closes:
                 result[key] = {}
                 continue
             v, status = _nasdaq_status(closes)
-            month_ago = closes[0]
-            pct = (v - month_ago) / month_ago * 100
+            idx_1mo = max(0, len(closes) - 22)
+            pct = (v - closes[idx_1mo]) / closes[idx_1mo] * 100 if closes[idx_1mo] else 0
             result[key] = {
                 'value':  v,
                 'status': status,
@@ -250,24 +377,32 @@ def fetch_yahoo_all() -> dict:
             continue
 
         if key in ('kre', 'xlf'):
-            closes = _yahoo_history(sym, '1mo')
+            closes = _yahoo_history(sym, '6mo')  # 3개월 모멘텀 계산용
             if not closes:
                 result[key] = {}
                 continue
-            v = round(closes[-1], 2)
-            month_ago = closes[0]
-            pct = round((v - month_ago) / month_ago * 100, 1)
-            if   pct >= 10: status = '최상'
-            elif pct >= 4:  status = '긍정'
-            elif pct >= 0:  status = '관망'
-            elif pct >= -5: status = '경고'
-            else:           status = '위험'
             label = 'KRE 지역은행' if key == 'kre' else 'XLF 금융'
-            result[key] = {
-                'value':  v,
-                'status': status,
-                'note':   f'{label} ${v:.2f} (1개월 {pct:+.1f}%)',
-            }
+            r = _mom_etf_status(closes, label)
+            result[key] = r if r else {}
+            time.sleep(0.3)
+            continue
+
+        if key == 'soxx':
+            closes = _yahoo_history(sym, '6mo')
+            if not closes:
+                result[key] = {}
+                continue
+            result[key] = _soxx_status(closes)
+            time.sleep(0.3)
+            continue
+
+        if key in ('kospi', 'kosdaq'):
+            closes = _yahoo_history(sym, '6mo')
+            if not closes:
+                result[key] = {}
+                continue
+            label = 'KOSPI' if key == 'kospi' else 'KOSDAQ'
+            result[key] = _kr_index_status(closes, label)
             time.sleep(0.3)
             continue
 
@@ -487,9 +622,44 @@ def fetch_fear_greed() -> dict:
 # ── pykrx 외국인 수급 ─────────────────────────────────────────────────
 
 def fetch_foreign_flow() -> dict:
-    """KOSPI 외국인 당일 순매수 (억원) — KRX API 키 발급 후 활성화 예정"""
-    # TODO: KRX Open API 키 발급 후 구현
-    # os.getenv('KRX_API_KEY') 사용
+    """KOSPI 외국인 당일 순매수 (억원) — pykrx 사용 시도.
+
+    pykrx 1.2.x에서 get_market_net_purchases_of_equities_by_date 함수가 없는 경우
+    get_market_trading_value_by_investor를 fallback으로 시도.
+    """
+    try:
+        from pykrx import stock as _stock
+        today = datetime.now()
+        start = (today - timedelta(days=7)).strftime('%Y%m%d')
+        end   = today.strftime('%Y%m%d')
+
+        # 방법 1: get_market_net_purchases_of_equities_by_date (pykrx 신버전)
+        if hasattr(_stock, 'get_market_net_purchases_of_equities_by_date'):
+            df = _stock.get_market_net_purchases_of_equities_by_date(start, end, 'KOSPI')
+            if df is not None and not df.empty:
+                foreign_col = next((c for c in df.columns if '외국인' in str(c)), None)
+                if foreign_col:
+                    latest = df[foreign_col].dropna()
+                    if not latest.empty:
+                        net = int(latest.iloc[-1])
+                        net_eok = round(net / 1e8, 0)
+                        fn = STATUS_THRESHOLDS.get('foreign_flow')
+                        return {
+                            'value':  net_eok,
+                            'status': fn(net) if fn else '관망',
+                            'note':   f'외국인 {net_eok:+,.0f}억원 (KOSPI, pykrx)',
+                        }
+
+        # 방법 2: get_market_trading_value_by_investor (pykrx 1.2.x)
+        # KOSPI 전체 외국인 순매수는 지수별 집계가 필요하므로 대표 종목 접근 불가
+        # → 이 버전에서는 외국인 수급 수집 불가
+        print('[외국인수급] pykrx 1.2.x에서 시장전체 외국인 순매수 함수 미지원')
+        return {}
+
+    except ImportError:
+        print('[외국인수급] pykrx 미설치')
+    except Exception as e:
+        print(f'[외국인수급] pykrx 오류: {e}')
     return {}
 
 

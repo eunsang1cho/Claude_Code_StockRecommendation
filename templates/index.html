@@ -747,6 +747,59 @@ td { padding: 6px 10px; font-size: 13px; vertical-align: middle; }
     </div>
   </div>
 
+  <!-- 🇰🇷 국장 분석 카드 -->
+  <div id="kr-market-card" style="background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius);padding:12px;margin-bottom:12px">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+      <div style="display:flex;align-items:center;gap:6px">
+        <div style="font-size:13px;font-weight:700">🇰🇷 국장 분리 분석</div>
+        <div style="font-size:10px;color:var(--text-muted)">미국·한국 시장 방향성 독립 추적</div>
+      </div>
+      <button onclick="refreshSemiRisk()" style="background:none;border:1px solid var(--border);color:var(--text-muted);border-radius:6px;padding:3px 8px;font-size:10px;cursor:pointer" title="반도체 리스크 즉시 갱신">🔄 리스크 갱신</button>
+    </div>
+
+    <!-- 미장/국장 스코어 비교 -->
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
+      <div id="us-score-box" style="text-align:center;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px">
+        <div style="font-size:9px;color:var(--text-muted);margin-bottom:4px">🇺🇸 미장 방향성</div>
+        <div id="us-dir-score" style="font-size:30px;font-weight:800;line-height:1;color:var(--text)">--</div>
+        <div id="us-dir-label" style="font-size:9px;margin-top:4px;font-weight:600;color:var(--text-muted)">--</div>
+        <div style="font-size:8px;color:var(--text-muted);margin-top:4px">구조적리스크+심리모멘텀 평균 (낮을수록 강세)</div>
+      </div>
+      <div id="kr-score-box" style="text-align:center;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px">
+        <div style="font-size:9px;color:var(--text-muted);margin-bottom:4px">🇰🇷 국장 방향성</div>
+        <div id="kr-dir-score" style="font-size:30px;font-weight:800;line-height:1;color:var(--text)">--</div>
+        <div id="kr-dir-label" style="font-size:9px;margin-top:4px;font-weight:600;color:var(--text-muted)">--</div>
+        <div style="font-size:8px;color:var(--text-muted);margin-top:4px">원달러(30%)·외국인수급(25%)·SOXX(25%)·KOSPI(20%)</div>
+      </div>
+    </div>
+
+    <!-- 디커플링 표시 -->
+    <div id="kr-decouple-row" style="display:none;background:var(--surface);border:1px solid #fbbf24;border-radius:6px;padding:6px 10px;margin-bottom:10px;font-size:10px;color:#fbbf24;text-align:center"></div>
+
+    <!-- 반도체 쏠림 리스크 -->
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px">
+      <div style="font-size:11px;font-weight:700;margin-bottom:4px">⚡ 반도체 쏠림 취약 리스크</div>
+      <div style="font-size:9px;color:var(--text-muted);margin-bottom:8px">KOSPI 내 반도체 비중 ~30% — 쏠림 자체가 리스크가 아닌, 아래 4가지 충격이 왔을 때 국장 전체를 끌어내리는 취약점</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:8px">
+        <div style="text-align:center">
+          <div style="font-size:9px;color:var(--text-muted);margin-bottom:3px">SOXX 1개월</div>
+          <div id="semi-mom-1mo" style="font-size:17px;font-weight:700;color:var(--text)">--</div>
+        </div>
+        <div style="text-align:center">
+          <div style="font-size:9px;color:var(--text-muted);margin-bottom:3px">SOXX 3개월</div>
+          <div id="semi-mom-3mo" style="font-size:17px;font-weight:700;color:var(--text)">--</div>
+        </div>
+        <div style="text-align:center">
+          <div style="font-size:9px;color:var(--text-muted);margin-bottom:3px">경보 수준</div>
+          <div id="semi-alert-badge" style="font-size:13px;font-weight:700;color:var(--text)">--</div>
+        </div>
+      </div>
+      <!-- 위험 벡터 그리드 -->
+      <div id="semi-risk-vectors" style="display:grid;grid-template-columns:1fr 1fr;gap:4px;margin-top:6px"></div>
+      <div id="semi-risk-detail" style="margin-top:6px;font-size:10px;color:var(--text-muted);line-height:1.6"></div>
+    </div>
+  </div>
+
   <!-- CMS 위기경보 스코어 카드 -->
   <div id="cms-card" style="background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius);padding:12px;margin-bottom:12px">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
@@ -4013,6 +4066,11 @@ const IND_DEFS = [
     thresholds:[], def_s:'관망', noAutoStatus:true },
   { key:'xlf',            name:'XLF 금융섹터',        group:'글로벌',   type:'numeric', unit:'$', weight:5,
     thresholds:[], def_s:'관망', noAutoStatus:true },
+  // 국장 모멘텀
+  { key:'kospi',          name:'KOSPI',               group:'국장',     type:'numeric', unit:'', weight:0,
+    thresholds:[], def_s:'관망', noAutoStatus:true },
+  { key:'kosdaq',         name:'KOSDAQ',              group:'국장',     type:'numeric', unit:'', weight:0,
+    thresholds:[], def_s:'관망', noAutoStatus:true },
   // 매일 체크리스트 (이미지 기준)
   { key:'mmf_total',      name:'MMF 총자산',       group:'체크리스트', type:'numeric', unit:'T$', weight:8,
     thresholds:[{v:7.5,s:'경고',dir:'below'},{v:7.8,s:'관망',dir:'below'},{v:8.0,s:'긍정',dir:'below'}], def_s:'최상', dir:'below' },
@@ -4041,7 +4099,7 @@ const IND_INFO = {
   usd_krw:       { desc:'달러 대비 원화 환율. 환율이 높을수록 한국 수출 기업에 유리하지만 수입 물가 상승과 외국인 자금 이탈 신호.', high:'위험 — 외국인 이탈, 수입물가 상승', low:'좋음 — 원화 강세, 외국인 유입', safe:'1,380~1,450', danger:'1,500 이상' },
   us10y:         { desc:'미국 10년물 국채 금리. 글로벌 자금 조달 비용의 기준. 높을수록 주식 밸류에이션 하락 압박.', high:'위험 — 성장주·신흥국 자금 이탈', low:'좋음 — 유동성 환경 개선', safe:'3.5~4.2%', danger:'4.5% 이상' },
   wti:           { desc:'서부 텍사스 원유 선물 가격. 에너지 비용과 인플레이션의 선행 지표.', high:'위험 — 인플레 자극, 금리 인상 압박', low:'좋음 — 원가 절감, 소비 여력 증가', safe:'60~80$', danger:'90$ 이상' },
-  soxx:          { desc:'필라델피아 반도체 지수. 글로벌 기술 사이클의 선행 지표. 삼성·SK하이닉스 주가와 상관관계 높음.', high:'좋음 — 반도체 사이클 상승', low:'위험 — 테크 경기 침체 신호', safe:'추세 유지', danger:'20% 이상 급락' },
+  soxx:          { desc:'필라델피아 반도체 지수. DRAM·낸드 수요 사이클의 선행 지표. 삼성전자·SK하이닉스와 상관관계 높음. 1개월 MoM 기준: -8% 이하 경고, -15% 이하 위험. 국장 분리 분석 카드의 반도체 취약 리스크와 연동.', high:'좋음 — 반도체 사이클 상승, 국장 수혜', low:'위험 — DRAM 수요 둔화, 국장 반도체 비중(30%) 타격', safe:'1개월 MoM +4% 이상', danger:'1개월 MoM -8% 이하' },
   foreign_flow:  { desc:'코스피 외국인 당일 순매수 금액(억원). 외국인 자금의 방향성이 시장 추세를 결정.', high:'좋음 — 외국인 적극 매수', low:'위험 — 외국인 대규모 이탈', safe:'+500억 이상', danger:'-3,000억 이하' },
   hy_spread:     { desc:'하이일드 채권 스프레드. 정크본드와 국채의 금리 차이. 높을수록 기업 부도 우려·신용 위험 증가.', high:'위험 — 신용경색, 위험회피 심화', low:'좋음 — 신용시장 안정', safe:'3.0~4.0%', danger:'5.0% 이상' },
   yield_curve:   { desc:'미 10년물-2년물 금리 차이. 장단기 역전(음수)은 경기침체 예고 신호로 유명.', high:'좋음 — 정상 수익률 곡선', low:'위험 — 장단기 역전, 경기침체 신호', safe:'+0.5% 이상', danger:'-0.5% 이하' },
@@ -4054,6 +4112,8 @@ const IND_INFO = {
   ust2y:         { desc:'미 2년물 국채 금리. 연준 단기 기준금리 예상을 가장 직접 반영. 높을수록 유동성 긴축 우려.', high:'위험 — 금리 인상 기대, 성장주·신흥국 타격', low:'좋음 — 금리 인하 기대, 유동성 완화', safe:'3.5~4.5%', danger:'5% 이상' },
   kre:           { desc:'KRE 미국 지역은행 ETF. 지역은행 건전성과 신용 공급 능력의 바로미터. 급락 시 금융 시스템 스트레스 신호.', high:'좋음 — 금융시스템 안정, 신용 원활', low:'위험 — 은행 스트레스, 신용경색 우려', safe:'상승 추세', danger:'1개월 -10% 이하' },
   xlf:           { desc:'XLF 미국 금융섹터 ETF. 대형 금융주 전반의 건강도. KRE와 함께 은행 시스템 리스크와 금리 민감도를 반영.', high:'좋음 — 금융섹터 강세, 수익성 호조', low:'위험 — 금융주 약세, 금리/신용 스트레스', safe:'상승 추세', danger:'1개월 -5% 이하' },
+  kospi:         { desc:'KOSPI 종합지수 1개월 모멘텀. 국장 방향성 파악의 핵심 지표. 국장 분리 분석 카드에서 미장 스코어와 독립적으로 비교. 외국인 수급과 원달러 방향에 민감.', high:'좋음 — 국장 강세 모멘텀', low:'위험 — 국장 약세, 외국인 이탈 가능성', safe:'1개월 +2% 이상', danger:'1개월 -3% 이하' },
+  kosdaq:        { desc:'KOSDAQ 지수 1개월 모멘텀. 중소형·바이오·테크 중심. KOSPI 대비 변동성 크고, 반도체 쏠림도 상대적으로 낮아 국내 내수 경기의 바로미터로 활용.', high:'좋음 — 중소형 성장주 강세', low:'위험 — 리스크 오프, 중소형 이탈', safe:'1개월 +2% 이상', danger:'1개월 -3% 이하' },
 };
 
 function showIndInfo(key) {
@@ -4512,6 +4572,205 @@ function calcSplitScore(data) {
     structural: _calcTrackScore(data, STRUCTURAL_WEIGHTS),
     sentiment:  _calcTrackScore(data, SENTIMENT_WEIGHTS),
   };
+}
+
+// ── 국장 분리 분석 ───────────────────────────────────────────────
+// 국장 스코어 구성: 원달러(환율 역풍), 외국인수급, SOXX(반도체선행), KOSPI모멘텀
+const KR_MARKET_WEIGHTS = {
+  'usd_krw':     { w: 0.30, desc: '원달러 환율 (강달러=국장불리)' },
+  'foreign_flow':{ w: 0.25, desc: '코스피 외국인 순매수' },
+  'soxx':        { w: 0.25, desc: 'SOXX 반도체 모멘텀 (국장핵심)' },
+  'kospi':       { w: 0.20, desc: 'KOSPI 1개월 모멘텀' },
+};
+
+function calcKrScore(data) {
+  return _calcTrackScore(data, KR_MARKET_WEIGHTS);
+}
+
+function _dirLabel(score) {
+  // score: 0(폭등방향)~100(폭락방향), 폭등 기준으로 반전 표시
+  if (score <= 20) return { text: '강세', color: '#22c55e' };
+  if (score <= 35) return { text: '긍정', color: '#4ade80' };
+  if (score <= 50) return { text: '중립', color: '#fbbf24' };
+  if (score <= 65) return { text: '약세', color: '#fb923c' };
+  return { text: '위험', color: '#f87171' };
+}
+
+// 반도체 취약 리스크 벡터 정의
+const SEMI_RISK_VECTORS = [
+  { key: 'demand_cycle', label: '📉 수요 사이클', desc: 'MU(Micron) — DRAM 수요 사이클 선행지표' },
+  { key: 'china_supply', label: '🇨🇳 중국 물량',  desc: 'CQQQ(중국테크) — 중국 반도체 부상 압박' },
+  { key: 'export_ctrl',  label: '🇺🇸 수출규제',   desc: '뉴스 키워드 빈도 — 수출통제·제재·BIS' },
+  { key: 'geopolitical', label: '⚔️ 지정학',      desc: 'ITA(방산ETF) — 지정학 긴장 선행지표' },
+];
+
+// 반도체 리스크 API 데이터 캐시
+let _semiRiskData = null;
+
+async function _loadSemiRisk() {
+  try {
+    const r = await fetch('/api/semi-risk');
+    const j = await r.json();
+    if (j.ok && j.data) {
+      _semiRiskData = j.data;
+      _renderSemiRiskVectors(_semiRiskData);
+    }
+  } catch(e) {
+    console.warn('[semi-risk]', e);
+  }
+}
+
+async function refreshSemiRisk() {
+  const btn = document.querySelector('button[onclick="refreshSemiRisk()"]');
+  if (btn) btn.textContent = '⏳ 수집 중...';
+  try {
+    const r = await fetch('/api/semi-risk/refresh');
+    const j = await r.json();
+    if (j.ok && j.data) {
+      _semiRiskData = j.data;
+      _renderSemiRiskVectors(_semiRiskData);
+    }
+  } catch(e) {
+    console.warn('[semi-risk refresh]', e);
+  }
+  if (btn) btn.textContent = '🔄 리스크 갱신';
+}
+
+function _renderSemiRiskVectors(d) {
+  if (!d) return;
+  const vecEl    = document.getElementById('semi-risk-vectors');
+  const detailEl = document.getElementById('semi-risk-detail');
+  const alertEl  = document.getElementById('semi-alert-badge');
+
+  // SOXX 표시는 daily indicators 데이터 기반으로 이미 처리됨 (1개월/3개월)
+  // 벡터 4개를 실제 API 데이터로 렌더링
+  const vectors = [
+    { key:'demand_cycle', label:'📉 수요 사이클', status: d.demand?.status,    note: d.demand?.note    || '---' },
+    { key:'china_supply', label:'🇨🇳 중국 물량',  status: d.china?.status,     note: d.china?.note     || '---' },
+    { key:'export_ctrl',  label:'🇺🇸 수출규제',   status: d.export_ctrl?.status,note: d.export_ctrl?.note||'---'},
+    { key:'geopolitical', label:'⚔️ 지정학',      status: d.geopolitical?.status,note:d.geopolitical?.note||'---'},
+  ];
+  const SCOLORS = { '최상':'#4ade80', '긍정':'#60a5fa', '관망':'#fbbf24', '경고':'#fb923c', '위험':'#f87171' };
+  if (vecEl) {
+    vecEl.innerHTML = vectors.map(v => {
+      const c = SCOLORS[v.status] || '#94a3b8';
+      return `<div style="padding:6px 8px;border-radius:6px;background:${c}11;border:1px solid ${c}33">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:2px">
+          <span style="font-size:10px;font-weight:600">${v.label}</span>
+          <span style="font-size:10px;color:${c};font-weight:700">${v.status || '--'}</span>
+        </div>
+        <div style="font-size:9px;color:var(--text-muted);line-height:1.3">${v.note}</div>
+      </div>`;
+    }).join('');
+  }
+  // 전체 경보 배지
+  if (alertEl) {
+    const ov = d.overall;
+    const oc = SCOLORS[ov] || '#94a3b8';
+    const tags = { '최상':'🟢 안전', '긍정':'🟢 관망', '관망':'🟡 관찰', '경고':'🟠 주의', '위험':'🔴 고위험' };
+    alertEl.textContent  = tags[ov] || ov || '--';
+    alertEl.style.color  = oc;
+  }
+  // 상세 설명 (가장 나쁜 신호)
+  if (detailEl) {
+    const signals = [d.demand?.signal, d.china?.signal, d.export_ctrl?.signal, d.geopolitical?.signal].filter(Boolean);
+    detailEl.textContent = signals.join('\n') || '모든 신호 정상';
+    detailEl.style.whiteSpace = 'pre-line';
+  }
+}
+
+function _updateKrMarketCard(data) {
+  // 미장 스코어 (구조+심리 평균, 폭락 기준 → 반전해서 폭등 기준으로)
+  const split = calcSplitScore(data);
+  const usRaw   = Math.round((split.structural + split.sentiment) / 2);
+  const usScore = usRaw;  // 낮을수록 강세 방향
+  const usLbl   = _dirLabel(usScore);
+  const usEl    = document.getElementById('us-dir-score');
+  const usLblEl = document.getElementById('us-dir-label');
+  if (usEl)    { usEl.textContent  = usScore; usEl.style.color = usLbl.color; }
+  if (usLblEl) { usLblEl.textContent = usLbl.text; usLblEl.style.color = usLbl.color; }
+
+  // 국장 스코어
+  const krScore = calcKrScore(data);
+  const krLbl   = _dirLabel(krScore);
+  const krEl    = document.getElementById('kr-dir-score');
+  const krLblEl = document.getElementById('kr-dir-label');
+  if (krEl)    { krEl.textContent  = krScore; krEl.style.color = krLbl.color; }
+  if (krLblEl) { krLblEl.textContent = krLbl.text; krLblEl.style.color = krLbl.color; }
+
+  // 디커플링 감지: 20점 이상 차이
+  const diff    = Math.abs(usScore - krScore);
+  const decEl   = document.getElementById('kr-decouple-row');
+  if (decEl) {
+    if (diff >= 20) {
+      const stronger = krScore < usScore ? '🇰🇷 국장' : '🇺🇸 미장';
+      const weaker   = krScore < usScore ? '🇺🇸 미장' : '🇰🇷 국장';
+      decEl.style.display = '';
+      decEl.textContent = `⚡ 디커플링 감지 (차이 ${diff}p) — ${stronger}이 ${weaker}보다 강세. 환율·수급 이상 여부 확인 권장.`;
+    } else {
+      decEl.style.display = 'none';
+    }
+  }
+
+  // 반도체 취약 리스크
+  const soxx = data?.soxx;
+  const mom1 = soxx?.mom_1mo ?? null;
+  const mom3 = soxx?.mom_3mo ?? null;
+
+  const m1el    = document.getElementById('semi-mom-1mo');
+  const m3el    = document.getElementById('semi-mom-3mo');
+  const alertEl = document.getElementById('semi-alert-badge');
+  const detailEl= document.getElementById('semi-risk-detail');
+  const vecEl   = document.getElementById('semi-risk-vectors');
+
+  if (m1el && mom1 != null) {
+    m1el.textContent  = (mom1 >= 0 ? '+' : '') + mom1.toFixed(1) + '%';
+    m1el.style.color  = mom1 >= 0 ? '#4ade80' : '#f87171';
+  }
+  if (m3el && mom3 != null) {
+    m3el.textContent  = (mom3 >= 0 ? '+' : '') + mom3.toFixed(1) + '%';
+    m3el.style.color  = mom3 >= 0 ? '#4ade80' : '#f87171';
+  }
+
+  let alertText = '🟢 정상', alertColor = '#4ade80';
+  let detail    = '반도체 사이클 안정 — KOSPI 반도체 비중 리스크 낮음.';
+  if (mom1 != null) {
+    if (mom1 <= -15) {
+      alertText = '🔴 고위험'; alertColor = '#f87171';
+      detail = `SOXX 1개월 ${mom1.toFixed(1)}% 급락 ⚠️\n삼성전자·SK하이닉스 연쇄 하락 경보. KOSPI 내 반도체 비중(약 30%)이 지수 전체를 끌어내릴 수 있음. 포지션 축소 검토.`;
+    } else if (mom1 <= -8) {
+      alertText = '🟠 주의'; alertColor = '#fb923c';
+      detail = `SOXX 1개월 ${mom1.toFixed(1)}% 하락\n반도체 사이클 둔화 신호. 외국인 수급 동향·수출규제 뉴스 주시.`;
+    } else if (mom1 <= -3) {
+      alertText = '🟡 관찰'; alertColor = '#fbbf24';
+      detail = `SOXX 1개월 ${mom1.toFixed(1)}% 소폭 하락. 단기 조정 가능성, 추세 확인 필요.`;
+    } else if (mom1 >= 10) {
+      alertText = '🟢 호조'; alertColor = '#4ade80';
+      detail = `SOXX 1개월 ${mom1.toFixed(1)}% 상승 — 반도체 사이클 상승 국면, 국장 수혜 예상.`;
+    }
+  }
+
+  // SOXX MoM 배지 (daily indicators 기반)
+  if (alertEl && !_semiRiskData) {
+    // API 데이터 미로딩 시 SOXX MoM 기반 임시 표시
+    if (mom1 != null) {
+      if (mom1 <= -15)      { alertEl.textContent = '🔴 고위험'; alertEl.style.color = '#f87171'; }
+      else if (mom1 <= -8)  { alertEl.textContent = '🟠 주의';   alertEl.style.color = '#fb923c'; }
+      else if (mom1 <= -3)  { alertEl.textContent = '🟡 관찰';   alertEl.style.color = '#fbbf24'; }
+      else                  { alertEl.textContent = '🟢 정상';   alertEl.style.color = '#4ade80'; }
+    }
+    if (detailEl) { detailEl.textContent = detail; detailEl.style.whiteSpace = 'pre-line'; }
+    if (vecEl) {
+      vecEl.innerHTML = SEMI_RISK_VECTORS.map(v =>
+        `<div style="padding:5px 7px;border-radius:6px;background:var(--border);font-size:9px">
+          <span style="font-weight:600">${v.label}</span>
+          <span style="float:right;color:var(--text-muted);font-size:8px">${v.desc}</span>
+        </div>`
+      ).join('');
+    }
+  }
+  // 실제 API 데이터가 있으면 렌더링
+  if (_semiRiskData) _renderSemiRiskVectors(_semiRiskData);
 }
 
 // 구조: <55 = 안정, >=55 = 위험 / 심리: <55 = 낙관, >=55 = 패닉
@@ -5047,6 +5306,9 @@ function renderIndicators() {
   if (cur) {
     const split = calcSplitScore(data);
     _updateSplitScoreUI(split.structural, split.sentiment);
+    _updateKrMarketCard(data);
+    // 반도체 취약 리스크 API 데이터 로드 (처음 한 번만)
+    if (!_semiRiskData) _loadSemiRisk();
   }
 
   // 30일 방향성 추이 스파크 + 지수 오버랩

@@ -874,7 +874,7 @@ async def _scheduled_block_deals(app: Application) -> None:
 
     print("🕵️ 블록딜 수집 시작...")
     try:
-        data = await asyncio.to_thread(bdt.fetch_all_block_deals, 30)
+        data = await asyncio.to_thread(bdt.fetch_all_block_deals, 90)
         today = data['fetched_at'][:10]
         _db.save_block_deals(today, data)
         s = data['summary']
@@ -892,6 +892,65 @@ async def _scheduled_block_deals(app: Application) -> None:
         )
     except Exception as e:
         print(f"⚠️  블록딜 수집 오류: {e}")
+
+
+async def _scheduled_etf_flows(app: Application) -> None:
+    """ETF 플로우 + 종목별 유입액 — 매일 06:30"""
+    import etf_flow_tracker as eft
+    import database as _db
+
+    print("📊 ETF 플로우 수집 시작...")
+    try:
+        prev_row = _db.get_etf_flows_latest()
+        prev_data = prev_row.get('data', {}) if prev_row else {}
+        data = await asyncio.to_thread(eft.fetch_all_etf_flows, prev_data)
+        today = data['date']
+        _db.save_etf_flows(today, data)
+        us_n = len(data.get('us_stock_impact', []))
+        kr_n = len(data.get('kr_stock_impact', []))
+        ratio = data.get('bull_bear_ratio')
+        sentiment = f'레버리지 센티 {ratio:+.1f}%' if ratio is not None else ''
+        print(f"✅ ETF 플로우 완료: US {us_n}종목 / KR {kr_n}종목 {sentiment}")
+        await app.bot.send_message(
+            chat_id=USER_ID,
+            text=(
+                f"📊 *ETF 플로우 업데이트*\n"
+                f"US 영향 종목 {us_n}개 / KR 영향 종목 {kr_n}개\n"
+                f"{sentiment}"
+            ),
+            parse_mode="Markdown",
+        )
+    except Exception as e:
+        print(f"⚠️  ETF 플로우 오류: {e}")
+
+
+async def _scheduled_semi_risk(app: Application) -> None:
+    """반도체 쏠림 취약 리스크 수집 — 매일 06:45"""
+    import database as _db
+
+    print("⚡ 반도체 취약 리스크 수집 시작...")
+    try:
+        from semi_risk import fetch_all_semi_risk
+        data = await asyncio.to_thread(fetch_all_semi_risk)
+        today = data.get("updated_at", "")[:10]
+        _db.save_semi_risk(today, data)
+        overall = data.get("overall", "관망")
+        demand_st  = data.get("demand",   {}).get("status", "?")
+        china_st   = data.get("china",    {}).get("status", "?")
+        geo_st     = data.get("geopolitical", {}).get("status", "?")
+        print(f"✅ 반도체 리스크 완료: 종합={overall}, 수요={demand_st}, 중국={china_st}, 지정학={geo_st}")
+        if overall in ("위험", "경고"):
+            await app.bot.send_message(
+                chat_id=USER_ID,
+                text=(
+                    f"⚡ *반도체 취약 리스크 경보*\n"
+                    f"종합: *{overall}*\n"
+                    f"수요 사이클: {demand_st} | 중국 물량: {china_st} | 지정학: {geo_st}"
+                ),
+                parse_mode="Markdown",
+            )
+    except Exception as e:
+        print(f"⚠️  반도체 리스크 오류: {e}")
 
 
 async def _scheduled_smart_money(app: Application) -> None:
@@ -1031,14 +1090,14 @@ async def post_init(app: Application) -> None:
         args=[app],
     )
 
-    # ⑥ 전쟁지표: 매일 04:35
-    scheduler.add_job(
-        _scheduled_war_indicators,
-        "cron",
-        hour=4,
-        minute=35,
-        args=[app],
-    )
+    # ⑥ 전쟁지표: 비활성화
+    # scheduler.add_job(
+    #     _scheduled_war_indicators,
+    #     "cron",
+    #     hour=4,
+    #     minute=35,
+    #     args=[app],
+    # )
 
     # ⑪ 경제 캘린더 캐시 갱신: 매일 05:00
     scheduler.add_job(
@@ -1088,15 +1147,15 @@ async def post_init(app: Application) -> None:
         args=[app],
     )
 
-    # ⑮ 공매도 레이더: 매일 09:30 (평일)
-    scheduler.add_job(
-        _scheduled_short_radar,
-        "cron",
-        day_of_week="mon-fri",
-        hour=9,
-        minute=30,
-        args=[app],
-    )
+    # ⑮ 공매도 레이더: 비활성화
+    # scheduler.add_job(
+    #     _scheduled_short_radar,
+    #     "cron",
+    #     day_of_week="mon-fri",
+    #     hour=9,
+    #     minute=30,
+    #     args=[app],
+    # )
 
     # ⑯ 스마트머니 13F: 매주 월요일 08:00
     scheduler.add_job(
@@ -1114,6 +1173,24 @@ async def post_init(app: Application) -> None:
         "cron",
         hour=7,
         minute=0,
+        args=[app],
+    )
+
+    # ⑱ ETF 플로우: 매일 06:30 (미국 장 마감 후 데이터 확정)
+    scheduler.add_job(
+        _scheduled_etf_flows,
+        "cron",
+        hour=6,
+        minute=30,
+        args=[app],
+    )
+
+    # ⑲ 반도체 취약 리스크: 매일 06:45 (ETF 플로우 직후)
+    scheduler.add_job(
+        _scheduled_semi_risk,
+        "cron",
+        hour=6,
+        minute=45,
         args=[app],
     )
 

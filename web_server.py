@@ -1720,6 +1720,90 @@ def api_get_liquidity_history(days: int = 90) -> JSONResponse:
     return JSONResponse({"ok": True, "history": history, "snapshots": rows})
 
 
+# ── 종합 시장 점수 ───────────────────────────────────────────────────
+
+@app.get("/api/market-score")
+def api_get_market_score() -> JSONResponse:
+    """종합 시장 위험 점수 반환.
+
+    daily_indicators 최신 데이터에서 주요 6개 지표의 상태를 점수로 변환 후 가중 평균.
+    - 상태 → 점수: 최상=0, 긍정=15, 관망=35, 경고=65, 위험=90
+    - 가중치: USD_KRW 20%, VIX 20%, HY_SPREAD 15%, NASDAQ_MOM 15%, FEAR_GREED 15%, GOLD 15%
+    - 종합 점수 0~100 + 5단계 상태 반환
+    """
+    _STATUS_TO_SCORE = {
+        '최상': 0,
+        '긍정': 15,
+        '관망': 35,
+        '경고': 65,
+        '위험': 90,
+    }
+    _WEIGHTS = {
+        'usd_krw':   20,
+        'vix':       20,
+        'hy_spread': 15,
+        'nasdaq':    15,
+        'fear_greed':15,
+        'gold':      15,
+    }
+
+    rows = database.get_daily_indicators(3)
+    if not rows:
+        return JSONResponse({"ok": False, "error": "daily_indicators 데이터 없음"})
+
+    # 가장 최신 row 사용
+    latest_row = rows[-1] if rows else {}
+    date  = latest_row.get("date", "")
+    data  = latest_row.get("data", {})
+
+    detail = {}
+    wsum   = 0.0
+    wtotal = 0.0
+
+    for key, weight in _WEIGHTS.items():
+        indicator = data.get(key, {})
+        status    = indicator.get("status") if isinstance(indicator, dict) else None
+        value     = indicator.get("value")  if isinstance(indicator, dict) else None
+        if status and status in _STATUS_TO_SCORE:
+            score_pt = _STATUS_TO_SCORE[status]
+            wsum    += score_pt * weight
+            wtotal  += weight
+            detail[key] = {
+                "status": status,
+                "value":  value,
+                "score":  score_pt,
+                "weight": weight,
+            }
+        else:
+            detail[key] = {
+                "status": status,
+                "value":  value,
+                "score":  None,
+                "weight": weight,
+                "note":   "데이터 없음 — 가중치 제외",
+            }
+
+    if wtotal == 0:
+        return JSONResponse({"ok": False, "error": "유효 지표 없음"})
+
+    composite = round(wsum / wtotal, 1)
+
+    if composite <= 15:   composite_status = '최상'
+    elif composite <= 30: composite_status = '긍정'
+    elif composite <= 55: composite_status = '관망'
+    elif composite <= 75: composite_status = '경고'
+    else:                 composite_status = '위험'
+
+    return JSONResponse({
+        "ok":      True,
+        "date":    date,
+        "score":   composite,
+        "status":  composite_status,
+        "detail":  detail,
+        "weights_used": round(wtotal, 1),
+    })
+
+
 # ── 공매도 레이더 ────────────────────────────────────────────────────
 
 @app.get("/api/short-radar")
@@ -1749,3 +1833,99 @@ def api_get_block_deals() -> JSONResponse:
     if not row:
         return JSONResponse({"ok": True, "fetch_date": None, "data": None})
     return JSONResponse({"ok": True, "fetch_date": row["fetch_date"], "data": row["data"], "created_at": row["created_at"]})
+
+
+# ── ETF 플로우 ────────────────────────────────────────────────────────
+
+@app.get("/api/etf-flows")
+def api_get_etf_flows() -> JSONResponse:
+    """최신 ETF 플로우 + 4방향 종목별 유입액 반환.
+    KR 데이터(kr_kr/kr_us)가 비어 있으면(주말·공휴일) 가장 최근 거래일 데이터로 보완.
+    """
+    row = database.get_etf_flows_latest()
+    if not row:
+        return JSONResponse({"ok": True, "date": None, "data": None})
+    data = row["data"]
+    # KR 데이터 없으면 최근 거래일에서 보완
+    if not data.get("imp_kr_kr") or not data.get("imp_kr_us"):
+        history = database.get_etf_flows_history(30)
+        for prev in history:
+            prev_d = prev.get("data", {})
+            if prev_d.get("imp_kr_kr") and not data.get("imp_kr_kr"):
+                data = {**data, "imp_kr_kr": prev_d["imp_kr_kr"],
+                        "flow_kr_kr": prev_d.get("flow_kr_kr", {}),
+                        "snap_kr_kr": prev_d.get("snap_kr_kr", {}),
+                        "_kr_kr_date": prev["date"]}
+            if prev_d.get("imp_kr_us") and not data.get("imp_kr_us"):
+                data = {**data, "imp_kr_us": prev_d["imp_kr_us"],
+                        "flow_kr_us": prev_d.get("flow_kr_us", {}),
+                        "snap_kr_us": prev_d.get("snap_kr_us", {}),
+                        "_kr_us_date": prev["date"]}
+            if data.get("imp_kr_kr") and data.get("imp_kr_us"):
+                break
+    # 환율 추가 (USD→KRW 변환용)
+    usd_krw = 1420.0
+    try:
+        ind_rows = database.get_daily_indicators(1)
+        if ind_rows:
+            usd_val = (ind_rows[0].get("data", {}).get("usd_krw") or {}).get("value")
+            if usd_val:
+                usd_krw = float(usd_val)
+    except Exception:
+        pass
+    return JSONResponse({"ok": True, "date": row["date"], "data": data, "usd_krw": usd_krw, "created_at": row["created_at"]})
+
+
+@app.get("/api/semi-risk")
+def api_get_semi_risk() -> JSONResponse:
+    """반도체 쏠림 취약 리스크 최신 스냅샷.
+    DB에 저장된 최신 데이터 반환. 없으면 실시간 수집.
+    """
+    row = database.get_semi_risk_latest()
+    if row:
+        return JSONResponse({"ok": True, "date": row["date"],
+                             "data": row["data"], "created_at": row["created_at"]})
+    # DB 데이터 없으면 실시간 수집
+    try:
+        from semi_risk import fetch_all_semi_risk
+        data = fetch_all_semi_risk()
+        today = data.get("updated_at", "")[:10]
+        database.save_semi_risk(today, data)
+        return JSONResponse({"ok": True, "date": today, "data": data})
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
+
+
+@app.get("/api/semi-risk/refresh")
+def api_refresh_semi_risk() -> JSONResponse:
+    """반도체 리스크 즉시 수집 (수동 갱신)."""
+    try:
+        from semi_risk import fetch_all_semi_risk
+        data = fetch_all_semi_risk()
+        today = data.get("updated_at", "")[:10]
+        database.save_semi_risk(today, data)
+        return JSONResponse({"ok": True, "date": today, "data": data})
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
+
+
+@app.get("/api/etf-flows/history")
+def api_get_etf_flows_history(days: int = 90) -> JSONResponse:
+    """최근 N일 ETF 플로우 히스토리 (차트용 — 스냅샷 제외 경량)."""
+    rows = database.get_etf_flows_history(days)
+    compact = []
+    for row in rows:
+        d = row.get('data', {})
+        compact.append({
+            'date':       row['date'],
+            'imp_us_us':  d.get('imp_us_us', []),
+            'imp_kr_kr':  d.get('imp_kr_kr', []),
+            'imp_us_kr':  d.get('imp_us_kr', []),
+            'imp_kr_us':  d.get('imp_kr_us', []),
+            'flow_us_us': d.get('flow_us_us', {}),
+            'flow_us_kr': d.get('flow_us_kr', {}),
+            'flow_kr_kr': d.get('flow_kr_kr', {}),
+            'flow_kr_us': d.get('flow_kr_us', {}),
+            'bull_bear':  d.get('bull_bear'),
+        })
+    return JSONResponse({"ok": True, "history": compact})

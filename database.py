@@ -443,10 +443,26 @@ def init_db() -> None:
                 created_at  TEXT DEFAULT (datetime('now', 'localtime'))
             );
 
+            CREATE TABLE IF NOT EXISTS etf_flows (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                date       TEXT NOT NULL UNIQUE,
+                data_json  TEXT NOT NULL,
+                created_at TEXT DEFAULT (datetime('now', 'localtime'))
+            );
+
+            CREATE TABLE IF NOT EXISTS semi_risk_snapshots (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                date       TEXT NOT NULL UNIQUE,
+                data_json  TEXT NOT NULL,
+                created_at TEXT DEFAULT (datetime('now', 'localtime'))
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_semi_risk_date ON semi_risk_snapshots(date);
             CREATE INDEX IF NOT EXISTS idx_liquidity_date ON liquidity_snapshots(date);
             CREATE INDEX IF NOT EXISTS idx_short_radar_date ON short_radar(date);
             CREATE INDEX IF NOT EXISTS idx_smart_money_cik ON smart_money(cik);
             CREATE INDEX IF NOT EXISTS idx_block_deals_date ON block_deals(fetch_date);
+            CREATE INDEX IF NOT EXISTS idx_etf_flows_date ON etf_flows(date);
         """)
     # scan_results 마이그레이션: market 컬럼 추가
     with _connect() as conn:
@@ -1644,3 +1660,82 @@ def get_block_deals_history(days: int = 30) -> list[dict]:
             data = {}
         result.append({"fetch_date": row["fetch_date"], "data": data, "created_at": row["created_at"]})
     return result
+
+
+def save_etf_flows(date: str, data: dict) -> int:
+    """ETF 플로우 스냅샷 저장 (날짜당 1개, UPSERT)."""
+    data_json = json.dumps(data, ensure_ascii=False)
+    with _connect() as conn:
+        cur = conn.execute(
+            """INSERT INTO etf_flows (date, data_json)
+               VALUES (?, ?)
+               ON CONFLICT(date) DO UPDATE SET
+                 data_json = excluded.data_json,
+                 created_at = datetime('now','localtime')""",
+            (date, data_json),
+        )
+        return cur.lastrowid
+
+
+def get_etf_flows_latest() -> dict | None:
+    """가장 최신 ETF 플로우 스냅샷 반환."""
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT date, data_json, created_at FROM etf_flows ORDER BY date DESC LIMIT 1"
+        ).fetchone()
+    if not row:
+        return None
+    try:
+        data = json.loads(row["data_json"])
+    except Exception:
+        data = {}
+    return {"date": row["date"], "data": data, "created_at": row["created_at"]}
+
+
+def get_etf_flows_history(days: int = 30) -> list[dict]:
+    """최근 N일간 ETF 플로우 스냅샷 목록 반환."""
+    from datetime import timedelta
+    cutoff = (datetime.now() - timedelta(days=days)).strftime('%Y-%m-%d')
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT date, data_json, created_at FROM etf_flows WHERE date >= ? ORDER BY date DESC",
+            (cutoff,),
+        ).fetchall()
+    result = []
+    for row in rows:
+        try:
+            data = json.loads(row["data_json"])
+        except Exception:
+            data = {}
+        result.append({"date": row["date"], "data": data, "created_at": row["created_at"]})
+    return result
+
+
+# ── 반도체 취약 리스크 스냅샷 ──────────────────────────────────────
+
+def save_semi_risk(date: str, data: dict) -> int:
+    """반도체 리스크 스냅샷 저장 (날짜별 1개, UPSERT)."""
+    with _connect() as conn:
+        cur = conn.execute(
+            """INSERT INTO semi_risk_snapshots (date, data_json)
+               VALUES (?, ?)
+               ON CONFLICT(date) DO UPDATE SET data_json=excluded.data_json,
+               created_at=datetime('now','localtime')""",
+            (date, json.dumps(data, ensure_ascii=False)),
+        )
+        return cur.lastrowid
+
+
+def get_semi_risk_latest() -> dict | None:
+    """가장 최신 반도체 리스크 스냅샷 반환."""
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT date, data_json, created_at FROM semi_risk_snapshots ORDER BY date DESC LIMIT 1"
+        ).fetchone()
+    if not row:
+        return None
+    try:
+        data = json.loads(row["data_json"])
+    except Exception:
+        data = {}
+    return {"date": row["date"], "data": data, "created_at": row["created_at"]}
