@@ -1764,32 +1764,47 @@ def _parse_champion(row) -> dict:
     return d
 
 
-def get_current_champion() -> dict | None:
-    """현재 챔피언 조회 (가장 최근 레코드)."""
+def get_current_champion(market: str | None = None) -> dict | None:
+    """현재 챔피언 조회. market='KR'/'US' 로 시장별 분리."""
     with _connect() as conn:
-        row = conn.execute(
-            "SELECT * FROM champion ORDER BY id DESC LIMIT 1"
-        ).fetchone()
+        if market:
+            row = conn.execute(
+                "SELECT * FROM champion WHERE market=? ORDER BY id DESC LIMIT 1", (market,)
+            ).fetchone()
+        else:
+            row = conn.execute(
+                "SELECT * FROM champion ORDER BY id DESC LIMIT 1"
+            ).fetchone()
     if not row:
         return None
     return _parse_champion(row)
 
 
-def get_champion_history(limit: int = 30) -> list[dict]:
+def get_champion_history(limit: int = 30, market: str | None = None) -> list[dict]:
     """챔피언 이력 조회."""
     with _connect() as conn:
-        rows = conn.execute(
-            "SELECT * FROM champion ORDER BY id DESC LIMIT ?", (limit,)
-        ).fetchall()
+        if market:
+            rows = conn.execute(
+                "SELECT * FROM champion WHERE market=? ORDER BY id DESC LIMIT ?", (market, limit)
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM champion ORDER BY id DESC LIMIT ?", (limit,)
+            ).fetchall()
     return [_parse_champion(r) for r in rows]
 
 
-def get_champion_history_full(limit: int = 60) -> list[dict]:
+def get_champion_history_full(limit: int = 60, market: str | None = None) -> list[dict]:
     """역대 챔피언 + 최신가 + 수익률 포함."""
     with _connect() as conn:
-        rows = conn.execute(
-            "SELECT * FROM champion ORDER BY id DESC LIMIT ?", (limit,)
-        ).fetchall()
+        if market:
+            rows = conn.execute(
+                "SELECT * FROM champion WHERE market=? ORDER BY id DESC LIMIT ?", (market, limit)
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM champion ORDER BY id DESC LIMIT ?", (limit,)
+            ).fetchall()
         result = []
         for row in rows:
             d = _parse_champion(row)
@@ -1812,36 +1827,34 @@ def get_champion_history_full(limit: int = 60) -> list[dict]:
 
 def update_champion(result: dict) -> dict:
     """
-    새 스캔 결과(result)와 현재 챔피언을 비교해 필요 시 교체.
+    새 스캔 결과(result)와 같은 시장 현재 챔피언을 비교해 필요 시 교체.
     - 더 높은 점수의 다른 종목 발견 → 교체 (streak=1)
     - 같은 종목이 오늘 다시 최고 → streak + 1
     - 현재 챔피언이 여전히 우위 → 유지 (변경 없음)
     반환: 업데이트된 champion dict
     """
     from datetime import datetime as _dt
-    today = _dt.now().strftime("%Y-%m-%d")
+    today  = _dt.now().strftime("%Y-%m-%d")
+    market = result.get("market", "KR")
     new_score = float(result.get("champion_score", 0.0))
-    cur = get_current_champion()
+    cur = get_current_champion(market)
 
     if not cur:
-        # 최초 챔피언
         _save_champion(result, streak=1, today=today)
-        return get_current_champion()
+        return get_current_champion(market)
 
-    cur_score = float(cur.get("champion_score", 0.0))
-    cur_date  = cur.get("date", "")
+    cur_score  = float(cur.get("champion_score", 0.0))
+    cur_date   = cur.get("date", "")
     cur_ticker = cur.get("ticker", "")
 
     if result["ticker"] == cur_ticker:
-        # 같은 종목: 날짜가 바뀌었으면 streak +1, 아니면 점수만 갱신
         streak = cur.get("streak", 1) + (1 if cur_date != today else 0)
         if new_score >= cur_score or cur_date != today:
             _save_champion(result, streak=streak, today=today)
     elif new_score > cur_score:
-        # 더 강한 새 종목 발견 → 교체
         _save_champion(result, streak=1, today=today)
 
-    return get_current_champion()
+    return get_current_champion(market)
 
 
 def _save_champion(result: dict, streak: int, today: str) -> None:

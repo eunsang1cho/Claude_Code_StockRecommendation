@@ -207,10 +207,12 @@ def serve_game() -> HTMLResponse:
 
 @app.get("/api/champion")
 def api_champion() -> JSONResponse:
-    cur = database.get_current_champion()
-    history = database.get_champion_history(7)
-    history_full = database.get_champion_history_full(60)
-    return JSONResponse({"current": cur, "history": history, "history_full": history_full})
+    return JSONResponse({
+        "kr": database.get_current_champion("KR"),
+        "us": database.get_current_champion("US"),
+        "history_kr": database.get_champion_history_full(30, "KR"),
+        "history_us": database.get_champion_history_full(30, "US"),
+    })
 
 
 @app.get("/api/latest")

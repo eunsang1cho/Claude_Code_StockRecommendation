@@ -3461,153 +3461,117 @@ function switchAlgoTab(idx) {
 
 // ── 챔피언 카드 ──────────────────────────────────────────────────────
 
-async function loadChampion() {
-  const wrap = document.getElementById('champion-wrap');
-  if (!wrap) return;
-  try {
-    const d = await apiFetch('/api/champion');
-    const cur = d.current;
-    if (!cur) {
-      wrap.innerHTML = `<div style="background:var(--surface);border:1px dashed var(--border);border-radius:12px;padding:14px 18px;color:var(--text-muted);font-size:13px">
-        👑 챔피언 미선정 — 다음 스캔 후 자동 선정됩니다
-      </div>`;
-      return;
-    }
+function _buildChampCard(cur, histFull, label) {
+  if (!cur) {
+    return `<div style="flex:1;background:var(--surface);border:1px dashed var(--border);border-radius:12px;padding:14px 18px;color:var(--text-muted);font-size:13px">
+      ${label} 챔피언 미선정 — 다음 스캔 후 자동 선정됩니다
+    </div>`;
+  }
 
-    const hist      = d.history || [];
-    const histFull  = d.history_full || [];
-    const streak    = cur.streak || 1;
-    const isMkt     = (cur.market || '').startsWith('US');
-    const mktFlg    = isMkt ? '🇺🇸' : '🇰🇷';
-    const pSym      = isMkt ? '$' : '₩';
-    const fmt       = v => (v || 0).toLocaleString();
+  const streak = cur.streak || 1;
+  const isMkt  = (cur.market || '').startsWith('US');
+  const pSym   = isMkt ? '$' : '₩';
+  const fmt    = v => (v || 0).toLocaleString();
+  const patEmoji = {'텐배거':'💎','눌림목_매집':'🎯','골삼이':'📊','골든샘플':'🔑','MA압축지지':'📦','레드삼각':'📐'}[cur.pattern] || '⚪';
+  const sc     = cur.champion_score || 0;
+  const scoreColor = sc >= 80 ? '#10b981' : sc >= 65 ? '#f59e0b' : '#94a3b8';
 
-    // 히스토리 뱃지 (최근 7개, 현재 챔피언 강조)
-    const histHtml = hist.slice(0, 7).map(h =>
-      `<div class="champ-hist-item${h.ticker === cur.ticker ? ' same' : ''}" title="${escHtml(h.name)} | ${fmtDate(h.date)} | ${h.champion_score}pt">
-        ${escHtml(h.ticker)}
-       </div>`
-    ).join('');
+  const BD_MAX = {'패턴':25,'신뢰도':15,'RSI':15,'MACD':15,'거래량':10,'MA정배열':10,'52주고점':10};
+  const bd = cur.breakdown || {};
+  const bdHtml = Object.keys(bd).length > 0 ? Object.entries(BD_MAX).map(([k, mx]) => {
+    const v = bd[k] || 0;
+    const pct = mx > 0 ? Math.round(v / mx * 100) : 0;
+    const barColor = pct >= 80 ? '#10b981' : pct >= 50 ? '#f59e0b' : '#64748b';
+    return `<div class="champ-bd-row">
+      <span class="champ-bd-label">${k}</span>
+      <div class="champ-bd-bar-wrap"><div class="champ-bd-bar" style="width:${pct}%;background:${barColor}"></div></div>
+      <span class="champ-bd-val">${v}</span>
+      <span class="champ-bd-max">/${mx}</span>
+    </div>`;
+  }).join('') : '';
 
-    // 패턴 이모지
-    const patEmoji = {'텐배거':'💎','눌림목_매집':'🎯','골삼이':'📊','골든샘플':'🔑','MA압축지지':'📦','레드삼각':'📐'}[cur.pattern] || '⚪';
+  const histTableRows = (histFull || []).map(h => {
+    const hSym = (h.market||'').startsWith('US') ? '$' : '₩';
+    const ret  = h.return_pct;
+    const retHtml = ret === null || ret === undefined
+      ? `<span class="champ-ret-nil">—</span>`
+      : ret >= 0 ? `<span class="champ-ret-pos">+${ret}%</span>`
+                 : `<span class="champ-ret-neg">${ret}%</span>`;
+    const latestHtml = h.latest_price
+      ? `${hSym}${h.latest_price.toLocaleString()}`
+      : `<span style="color:var(--text-muted)">—</span>`;
+    return `<tr>
+      <td>${fmtDate(h.date)}</td>
+      <td>${escHtml(h.name)}</td>
+      <td>${escHtml(h.ticker)}</td>
+      <td>${escHtml(h.pattern)}</td>
+      <td style="color:${h.champion_score>=80?'#10b981':h.champion_score>=65?'#f59e0b':'#94a3b8'}">${h.champion_score}</td>
+      <td>${h.streak>1?'🔥'+h.streak:h.streak}</td>
+      <td>${hSym}${(h.current_price||0).toLocaleString()}</td>
+      <td>${latestHtml}</td>
+      <td>${retHtml}</td>
+    </tr>`;
+  }).join('');
 
-    // 점수 게이지 색상
-    const sc = cur.champion_score || 0;
-    const scoreColor = sc >= 80 ? '#10b981' : sc >= 65 ? '#f59e0b' : '#94a3b8';
-
-    // 선정기준 breakdown 바
-    const BD_MAX = {'패턴':25,'신뢰도':15,'RSI':15,'MACD':15,'거래량':10,'MA정배열':10,'52주고점':10};
-    const bd = cur.breakdown || {};
-    const bdHtml = Object.entries(BD_MAX).map(([k, mx]) => {
-      const v = bd[k] || 0;
-      const pct = mx > 0 ? Math.round(v / mx * 100) : 0;
-      const barColor = pct >= 80 ? '#10b981' : pct >= 50 ? '#f59e0b' : '#64748b';
-      return `<div class="champ-bd-row">
-        <span class="champ-bd-label">${k}</span>
-        <div class="champ-bd-bar-wrap"><div class="champ-bd-bar" style="width:${pct}%;background:${barColor}"></div></div>
-        <span class="champ-bd-val">${v}</span>
-        <span class="champ-bd-max">/${mx}</span>
-      </div>`;
-    }).join('');
-
-    // 역대 챔피언 테이블
-    const histTableRows = histFull.map(h => {
-      const hMkt  = (h.market || '').startsWith('US');
-      const hSym  = hMkt ? '$' : '₩';
-      const hFlg  = hMkt ? '🇺🇸' : '🇰🇷';
-      const ret   = h.return_pct;
-      const retHtml = ret === null || ret === undefined
-        ? `<span class="champ-ret-nil">—</span>`
-        : ret >= 0
-          ? `<span class="champ-ret-pos">+${ret}%</span>`
-          : `<span class="champ-ret-neg">${ret}%</span>`;
-      const latestHtml = h.latest_price
-        ? `${hSym}${h.latest_price.toLocaleString()}`
-        : `<span style="color:var(--text-muted)">—</span>`;
-      const streakHtml = h.streak > 1 ? `🔥${h.streak}` : `${h.streak}`;
-      return `<tr>
-        <td>${fmtDate(h.date)}</td>
-        <td>${hFlg} ${escHtml(h.name)}</td>
-        <td>${escHtml(h.ticker)}</td>
-        <td>${escHtml(h.pattern)}</td>
-        <td style="color:${h.champion_score>=80?'#10b981':h.champion_score>=65?'#f59e0b':'#94a3b8'}">${h.champion_score}</td>
-        <td>${streakHtml}</td>
-        <td>${hSym}${(h.current_price||0).toLocaleString()}</td>
-        <td>${latestHtml}</td>
-        <td>${retHtml}</td>
-      </tr>`;
-    }).join('');
-
-    wrap.innerHTML = `
+  return `
+  <div style="flex:1;min-width:280px">
     <div class="champ-card">
       <div class="champ-crown">👑</div>
-
       <div class="champ-main">
-        <div class="champ-title">${mktFlg} Champion · ${fmtDate(cur.date)}</div>
+        <div class="champ-title">${label} Champion · ${fmtDate(cur.date)}</div>
         <div class="champ-name">${escHtml(cur.name)}</div>
         <div class="champ-ticker">${escHtml(cur.ticker)}</div>
         <div class="champ-meta">
           <span class="champ-badge">${patEmoji} ${escHtml(cur.pattern)}</span>
           <span class="champ-badge">신뢰도 ${cur.conf}%</span>
         </div>
-        ${hist.length > 1 ? `<div class="champ-history-row">${histHtml}</div>` : ''}
       </div>
-
       <div class="champ-score">
         <div class="champ-score-val" style="color:${scoreColor}">${sc.toFixed(1)}</div>
         <div class="champ-score-lbl">/ 100점</div>
       </div>
-
       <div class="champ-nums">
-        <div class="champ-num-row">
-          <span class="champ-num-lbl">선정가</span>
-          <span class="champ-num-val">${pSym}${fmt(cur.current_price)}</span>
-        </div>
-        <div class="champ-num-row">
-          <span class="champ-num-lbl">매수존</span>
-          <span class="champ-num-val" style="color:var(--accent)">${pSym}${fmt(cur.entry_low)}~${fmt(cur.entry_high)}</span>
-        </div>
-        <div class="champ-num-row">
-          <span class="champ-num-lbl">목표가</span>
-          <span class="champ-num-val" style="color:var(--green)">${pSym}${fmt(cur.target_price)}</span>
-        </div>
-        <div class="champ-num-row">
-          <span class="champ-num-lbl">손절가</span>
-          <span class="champ-num-val" style="color:var(--red)">${pSym}${fmt(cur.stop_loss)}</span>
-        </div>
+        <div class="champ-num-row"><span class="champ-num-lbl">선정가</span><span class="champ-num-val">${pSym}${fmt(cur.current_price)}</span></div>
+        <div class="champ-num-row"><span class="champ-num-lbl">매수존</span><span class="champ-num-val" style="color:var(--accent)">${pSym}${fmt(cur.entry_low)}~${fmt(cur.entry_high)}</span></div>
+        <div class="champ-num-row"><span class="champ-num-lbl">목표가</span><span class="champ-num-val" style="color:var(--green)">${pSym}${fmt(cur.target_price)}</span></div>
+        <div class="champ-num-row"><span class="champ-num-lbl">손절가</span><span class="champ-num-val" style="color:var(--red)">${pSym}${fmt(cur.stop_loss)}</span></div>
       </div>
-
       <div class="champ-streak">
         <div style="font-size:22px">${streak > 1 ? '🔥' : '⭐'}</div>
         <div class="champ-streak-num">${streak}</div>
         <div class="champ-streak-lbl">일 연속</div>
       </div>
-
-      ${Object.keys(bd).length > 0 ? `
-      <div class="champ-breakdown">
+      ${bdHtml ? `<div class="champ-breakdown">
         <div style="font-size:10px;color:var(--text-muted);margin-bottom:4px;letter-spacing:.05em">선정 기준</div>
         ${bdHtml}
       </div>` : ''}
     </div>
-
-    ${histFull.length > 0 ? `
+    ${histFull && histFull.length > 0 ? `
     <div class="champ-history-section">
       <div class="champ-history-toggle" onclick="this.nextElementSibling.classList.toggle('hidden')">
-        📋 역대 챔피언 (${histFull.length}건) <span style="font-size:10px">▼ 펼치기</span>
+        📋 역대 ${label} 챔피언 (${histFull.length}건) <span style="font-size:10px">▼ 펼치기</span>
       </div>
       <div class="hidden">
         <div class="champ-hist-table-wrap">
           <table class="champ-hist-table">
-            <thead><tr>
-              <th>날짜</th><th>종목명</th><th>티커</th><th>패턴</th>
-              <th>점수</th><th>연승</th><th>선정가</th><th>현재가</th><th>수익률</th>
-            </tr></thead>
+            <thead><tr><th>날짜</th><th>종목명</th><th>티커</th><th>패턴</th><th>점수</th><th>연승</th><th>선정가</th><th>현재가</th><th>수익률</th></tr></thead>
             <tbody>${histTableRows}</tbody>
           </table>
         </div>
       </div>
-    </div>` : ''}`;
+    </div>` : ''}
+  </div>`;
+}
+
+async function loadChampion() {
+  const wrap = document.getElementById('champion-wrap');
+  if (!wrap) return;
+  try {
+    const d = await apiFetch('/api/champion');
+    wrap.innerHTML = `<div style="display:flex;gap:14px;flex-wrap:wrap">
+      ${_buildChampCard(d.kr, d.history_kr, '🇰🇷 국장')}
+      ${_buildChampCard(d.us, d.history_us, '🇺🇸 미장')}
+    </div>`;
   } catch(e) {
     const wrap = document.getElementById('champion-wrap');
     if (wrap) wrap.innerHTML = '';
