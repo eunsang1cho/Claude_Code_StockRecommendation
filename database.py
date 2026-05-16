@@ -1764,17 +1764,26 @@ def _parse_champion(row) -> dict:
     return d
 
 
+def _market_filter_sql(market: str | None) -> tuple[str, tuple]:
+    """market 파라미터를 SQL WHERE 절 + 바인딩 값으로 변환.
+    'KR' → market NOT LIKE 'US%'
+    'US' → market LIKE 'US%'
+    None → 전체
+    """
+    if market == "US":
+        return "WHERE market LIKE 'US%'", ()
+    if market == "KR":
+        return "WHERE (market = 'KR' OR market = '' OR market NOT LIKE 'US%')", ()
+    return "", ()
+
+
 def get_current_champion(market: str | None = None) -> dict | None:
     """현재 챔피언 조회. market='KR'/'US' 로 시장별 분리."""
+    where, params = _market_filter_sql(market)
     with _connect() as conn:
-        if market:
-            row = conn.execute(
-                "SELECT * FROM champion WHERE market=? ORDER BY id DESC LIMIT 1", (market,)
-            ).fetchone()
-        else:
-            row = conn.execute(
-                "SELECT * FROM champion ORDER BY id DESC LIMIT 1"
-            ).fetchone()
+        row = conn.execute(
+            f"SELECT * FROM champion {where} ORDER BY id DESC LIMIT 1", params
+        ).fetchone()
     if not row:
         return None
     return _parse_champion(row)
@@ -1782,29 +1791,21 @@ def get_current_champion(market: str | None = None) -> dict | None:
 
 def get_champion_history(limit: int = 30, market: str | None = None) -> list[dict]:
     """챔피언 이력 조회."""
+    where, params = _market_filter_sql(market)
     with _connect() as conn:
-        if market:
-            rows = conn.execute(
-                "SELECT * FROM champion WHERE market=? ORDER BY id DESC LIMIT ?", (market, limit)
-            ).fetchall()
-        else:
-            rows = conn.execute(
-                "SELECT * FROM champion ORDER BY id DESC LIMIT ?", (limit,)
-            ).fetchall()
+        rows = conn.execute(
+            f"SELECT * FROM champion {where} ORDER BY id DESC LIMIT ?", params + (limit,)
+        ).fetchall()
     return [_parse_champion(r) for r in rows]
 
 
 def get_champion_history_full(limit: int = 60, market: str | None = None) -> list[dict]:
     """역대 챔피언 + 최신가 + 수익률 포함."""
+    where, params = _market_filter_sql(market)
     with _connect() as conn:
-        if market:
-            rows = conn.execute(
-                "SELECT * FROM champion WHERE market=? ORDER BY id DESC LIMIT ?", (market, limit)
-            ).fetchall()
-        else:
-            rows = conn.execute(
-                "SELECT * FROM champion ORDER BY id DESC LIMIT ?", (limit,)
-            ).fetchall()
+        rows = conn.execute(
+            f"SELECT * FROM champion {where} ORDER BY id DESC LIMIT ?", params + (limit,)
+        ).fetchall()
         result = []
         for row in rows:
             d = _parse_champion(row)
