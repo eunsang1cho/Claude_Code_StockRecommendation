@@ -1199,6 +1199,10 @@ def scan_all(tickers: list[str]) -> list[dict]:
 
     for ticker in tickers:
         try:
+            # 국장 티커는 6자리 숫자 (US 티커 혼입 방어)
+            if not ticker.isdigit():
+                continue
+
             df = get_ohlcv(ticker, days=_OHLCV_DAYS)
             if df is None or len(df) < 30:
                 continue

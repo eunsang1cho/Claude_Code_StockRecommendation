@@ -107,13 +107,13 @@ def _fetch_candidates_local(days_back: int = 70, min_pct: float = 15.0) -> set[s
         except Exception:
             pass
 
-    # 2. scan_results 이력 종목 (과거 패턴 감지 종목)
+    # 2. scan_results 이력 종목 (과거 패턴 감지 국장 종목만)
     sdb = os.path.join(DIR, "stocks.db")
     if os.path.exists(sdb):
         try:
             conn = sqlite3.connect(sdb)
             rows = conn.execute(
-                "SELECT DISTINCT ticker FROM scan_results"
+                "SELECT DISTINCT ticker FROM scan_results WHERE market NOT LIKE 'US%'"
             ).fetchall()
             conn.close()
             big_tickers.update(r[0] for r in rows)
