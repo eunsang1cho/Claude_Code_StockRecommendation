@@ -109,7 +109,9 @@ def get_russell2000_names() -> dict[str, str]:
 
 
 def _fetch_russell2000_data() -> tuple[dict[str, str], dict[str, str]]:
-    """iShares IWM CSV에서 {ticker: market}, {ticker: name} 동시 수집"""
+    """iShares IWM CSV에서 {ticker: market}, {ticker: name} 동시 수집.
+    iShares 차단 시 DB 이력 + ALL_US_TICKERS 폴백 사용.
+    """
     import urllib.request, csv as _csv
     url = (
         "https://www.ishares.com/us/products/239710/ishares-russell-2000-etf"
@@ -119,12 +121,15 @@ def _fetch_russell2000_data() -> tuple[dict[str, str], dict[str, str]]:
         req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
         with urllib.request.urlopen(req, timeout=20) as r:
             data = r.read().decode('utf-8', errors='ignore')
+        # HTML 응답 감지 (차단됨)
+        if data.lstrip()[:9].lower().startswith('<!doctype') or '<html' in data[:200]:
+            raise ValueError("HTML 응답 — iShares CSV 엔드포인트 차단됨")
         lines = data.strip().split('\n')
         header_idx = next(
             (i for i, l in enumerate(lines) if 'Ticker' in l and 'Name' in l), None
         )
         if header_idx is None:
-            return {}, {}
+            raise ValueError("CSV 헤더 없음")
         markets: dict[str, str] = {}
         names: dict[str, str] = {}
         reader = _csv.DictReader(lines[header_idx:])
@@ -134,10 +139,40 @@ def _fetch_russell2000_data() -> tuple[dict[str, str], dict[str, str]]:
                 markets[t] = 'US_RUSSELL'
                 n = row.get('Name', '').strip()
                 names[t] = n if n else t
-        return markets, names
+        if markets:
+            return markets, names
+        raise ValueError("파싱 결과 없음")
     except Exception as e:
-        print(f'[Russell2000] 티커 수집 실패: {e}')
-        return {}, {}
+        print(f'[Russell2000] iShares CSV 실패: {e} → 폴백 모드')
+
+    # ── 폴백 1: DB에 저장된 US_RUSSELL 이력 종목 ──────────────────────
+    markets: dict[str, str] = {}
+    names:   dict[str, str] = {}
+    try:
+        import sqlite3, os as _os
+        db_path = _os.path.join(_os.path.dirname(__file__), 'stocks.db')
+        if _os.path.exists(db_path):
+            conn = sqlite3.connect(db_path)
+            rows = conn.execute(
+                "SELECT DISTINCT ticker, name FROM scan_results WHERE market='US_RUSSELL'"
+            ).fetchall()
+            conn.close()
+            for t, n in rows:
+                if t and '.' not in t:
+                    markets[t] = 'US_RUSSELL'
+                    names[t]   = n or t
+            print(f'[Russell2000] DB 이력 폴백: {len(markets)}개')
+    except Exception as e:
+        print(f'[Russell2000] DB 폴백 실패: {e}')
+
+    # ── 폴백 2: NASDAQ100 + SP500 추가 ────────────────────────────────
+    _nq_set = set(NASDAQ100)
+    for t in list(dict.fromkeys(NASDAQ100 + SP500_ONLY)):
+        if t not in markets and '.' not in t:
+            markets[t] = 'US_NASDAQ' if t in _nq_set else 'US_SP500'
+            names[t]   = t
+    print(f'[Russell2000] 최종 폴백 합계: {len(markets)}개 (DB이력 + NASDAQ/S&P500)')
+    return markets, names
 
 
 # 전체 티커 목록 (중복 제거, 순서 유지)

@@ -647,7 +647,7 @@ td { padding: 6px 10px; font-size: 13px; vertical-align: middle; }
   </div>
 
   <div class="panel-header">
-    <h2>오늘 스캔 결과</h2>
+    <h2>최근 스캔 결과 <span id="scan-date-badge" style="font-size:12px;font-weight:400;color:var(--text-muted)"></span></h2>
     <div style="display:flex;align-items:center;gap:6px">
       <select id="today-market" onchange="renderToday()" style="font-size:12px;padding:4px 6px;background:var(--surface2);color:var(--text-primary);border:1px solid var(--border);border-radius:4px">
         <option value="">전체</option>
@@ -1613,6 +1613,13 @@ async function loadLatest() {
   try {
     _todayData = await apiFetch('/api/latest');
     document.getElementById('last-updated').textContent = '마지막 갱신: ' + new Date().toLocaleString('ko-KR');
+    // 스캔 날짜 배지 업데이트
+    const krDates = [...new Set(_todayData.filter(r=>!r.market?.startsWith('US')).map(r=>r._session_date?.slice(0,10)).filter(Boolean))];
+    const usDates = [...new Set(_todayData.filter(r=>r.market?.startsWith('US')).map(r=>r._session_date?.slice(0,10)).filter(Boolean))];
+    const badges = [];
+    if (krDates.length) badges.push('🇰🇷 ' + krDates[0]);
+    if (usDates.length) badges.push('🇺🇸 ' + usDates[0]);
+    document.getElementById('scan-date-badge').textContent = badges.length ? '(' + badges.join(' / ') + ')' : '';
     renderToday();
   } catch(e) {
     tbody.innerHTML = `<tr><td colspan="10" class="empty">오류: ${escHtml(e.message)}</td></tr>`;

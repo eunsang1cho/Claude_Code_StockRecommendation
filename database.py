@@ -639,13 +639,24 @@ def get_latest() -> list[dict]:
             session_ids,
         ).fetchall()
 
+        # 세션 날짜 조회 (UI용)
+        session_dates = {}
+        for sid in session_ids:
+            s = conn.execute(
+                "SELECT scanned_at FROM scan_sessions WHERE id=?", (sid,)
+            ).fetchone()
+            if s:
+                session_dates[sid] = s["scanned_at"]
+
         # 동일 ticker 중복 제거 (최고 신뢰도 우선)
         seen: set[str] = set()
         result = []
         for r in rows:
             if r["ticker"] not in seen:
                 seen.add(r["ticker"])
-                result.append(dict(r))
+                d = dict(r)
+                d["_session_date"] = session_dates.get(r["session_id"], "")
+                result.append(d)
         return result
 
 
