@@ -45,8 +45,9 @@ STATUS_THRESHOLDS = {
     # 낮을수록 현금 소진(과열) → 위험; 높을수록 관망자금 풍부 → 긍정
     'mmf_total':   lambda v: _status_below(v, [(1.5,'위험'),(1.8,'경고'),(2.1,'관망')],
                              default='긍정' if v < 2.5 else '최상'),
-    'foreign_flow':lambda v: _status_above(v/1e8, [(-5000,'위험'),(-1000,'경고'),(-1,'관망'),(5000,'최상')],
-                             default='긍정'),  # v = 억원 단위
+    # 외국인 순매수: 음수(매도)일수록 위험, 양수(매수)일수록 긍정. v = 원 단위
+    'foreign_flow':lambda v: _status_below(v/1e8, [(-5000,'위험'),(-1000,'경고'),(-1,'관망')],
+                             default=('최상' if v/1e8 >= 5000 else '긍정')),
     # 새 지표 (높을수록 위험)
     'vix':         lambda v: _status_above(v, [(30,'위험'),(25,'경고'),(20,'관망'),(15,'긍정')]),
     # gold: 2026년 기준 현실적 임계값 ($5000대 시장 반영)
@@ -622,44 +623,37 @@ def fetch_fear_greed() -> dict:
 # ── pykrx 외국인 수급 ─────────────────────────────────────────────────
 
 def fetch_foreign_flow() -> dict:
-    """KOSPI 외국인 당일 순매수 (억원) — pykrx 사용 시도.
+    """KOSPI 외국인 당일 순매수 (억원).
 
-    pykrx 1.2.x에서 get_market_net_purchases_of_equities_by_date 함수가 없는 경우
-    get_market_trading_value_by_investor를 fallback으로 시도.
+    Naver 모바일 지수 투자자 동향 API 사용.
+    (pykrx의 KRX 배치 API는 2026년부터 'LOGOUT' 차단되어 사용 불가)
+    반환 foreignValue 단위 = 백만원 → 원 환산 ×1e6, 억원 = ÷1e8.
     """
     try:
-        from pykrx import stock as _stock
-        today = datetime.now()
-        start = (today - timedelta(days=7)).strftime('%Y%m%d')
-        end   = today.strftime('%Y%m%d')
-
-        # 방법 1: get_market_net_purchases_of_equities_by_date (pykrx 신버전)
-        if hasattr(_stock, 'get_market_net_purchases_of_equities_by_date'):
-            df = _stock.get_market_net_purchases_of_equities_by_date(start, end, 'KOSPI')
-            if df is not None and not df.empty:
-                foreign_col = next((c for c in df.columns if '외국인' in str(c)), None)
-                if foreign_col:
-                    latest = df[foreign_col].dropna()
-                    if not latest.empty:
-                        net = int(latest.iloc[-1])
-                        net_eok = round(net / 1e8, 0)
-                        fn = STATUS_THRESHOLDS.get('foreign_flow')
-                        return {
-                            'value':  net_eok,
-                            'status': fn(net) if fn else '관망',
-                            'note':   f'외국인 {net_eok:+,.0f}억원 (KOSPI, pykrx)',
-                        }
-
-        # 방법 2: get_market_trading_value_by_investor (pykrx 1.2.x)
-        # KOSPI 전체 외국인 순매수는 지수별 집계가 필요하므로 대표 종목 접근 불가
-        # → 이 버전에서는 외국인 수급 수집 불가
-        print('[외국인수급] pykrx 1.2.x에서 시장전체 외국인 순매수 함수 미지원')
-        return {}
-
-    except ImportError:
-        print('[외국인수급] pykrx 미설치')
+        url = 'https://m.stock.naver.com/api/index/KOSPI/trend'
+        headers = {'User-Agent': 'Mozilla/5.0', 'Referer': 'https://finance.naver.com/'}
+        r = requests.get(url, params={'pageSize': 5, 'page': 1},
+                         headers=headers, timeout=12)
+        r.raise_for_status()
+        js = r.json()
+        # 리스트로 올 수도, 단일 dict로 올 수도 있음
+        row = js[0] if isinstance(js, list) and js else js
+        fv = str(row.get('foreignValue', '')).replace(',', '').replace('+', '').strip()
+        if not fv or fv in ('-', ''):
+            print('[외국인수급] Naver foreignValue 없음')
+            return {}
+        net_million = float(fv)          # 백만원
+        net = int(net_million * 1e6)     # 원
+        net_eok = round(net / 1e8, 0)    # 억원
+        bizdate = row.get('bizdate', '')
+        fn = STATUS_THRESHOLDS.get('foreign_flow')
+        return {
+            'value':  net_eok,
+            'status': fn(net) if fn else '관망',
+            'note':   f'외국인 {net_eok:+,.0f}억원 (KOSPI, {bizdate})',
+        }
     except Exception as e:
-        print(f'[외국인수급] pykrx 오류: {e}')
+        print(f'[외국인수급] Naver 오류: {e}')
     return {}
 
 

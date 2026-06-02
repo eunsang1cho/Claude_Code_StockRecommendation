@@ -12,9 +12,110 @@ import pandas as pd
 from pykrx import stock
 
 DIR = os.path.dirname(os.path.abspath(__file__))
-CACHE_FILE     = os.path.join(DIR, "candidates_cache.json")
-US_CACHE_FILE  = os.path.join(DIR, "us_candidates_cache.json")
-CACHE_HOURS    = 12
+CACHE_FILE       = os.path.join(DIR, "candidates_cache.json")
+US_CACHE_FILE    = os.path.join(DIR, "us_candidates_cache.json")
+MOVER_POOL_FILE  = os.path.join(DIR, "kr_mover_pool.json")
+SNAPSHOT_FILE    = os.path.join(DIR, "kr_market_snapshot.json")
+CACHE_HOURS      = 12
+SMALL_CAP_WON    = 5e12   # 시총 5조 (원)
+
+# Naver 모바일 시세 API (KRX 배치 API가 'LOGOUT' 차단되어 대체)
+_NAVER_HDR = {"User-Agent": "Mozilla/5.0", "Referer": "https://finance.naver.com/"}
+
+
+def _num(s) -> float:
+    """'1,234' / '15500000000' → float (실패 시 0)"""
+    try:
+        return float(str(s).replace(",", ""))
+    except Exception:
+        return 0.0
+
+
+# ── Naver 전체 시장 스냅샷 (KRX 배치 API 대체) ────────────────────────
+
+def get_kr_market_snapshot(force_refresh: bool = False) -> dict[str, dict]:
+    """
+    Naver 모바일 API로 KOSPI+KOSDAQ 전 종목 시세 스냅샷 수집.
+    반환: {ticker: {'name','close','flux','marketcap','volume','market'}}
+    1시간 캐시. KRX 'LOGOUT' 차단을 우회하는 핵심 데이터 소스.
+    """
+    # 1시간 캐시
+    if not force_refresh and os.path.exists(SNAPSHOT_FILE):
+        try:
+            with open(SNAPSHOT_FILE, "r", encoding="utf-8") as f:
+                cache = json.load(f)
+            cached_at = datetime.fromisoformat(cache["timestamp"])
+            if (datetime.now() - cached_at).total_seconds() < 3600:
+                return cache["data"]
+        except Exception:
+            pass
+
+    import urllib.request
+
+    snapshot: dict[str, dict] = {}
+    for mk in ("KOSPI", "KOSDAQ"):
+        page = 1
+        total = None
+        while True:
+            url = (f"https://m.stock.naver.com/api/stocks/marketValue/{mk}"
+                   f"?page={page}&pageSize=100")
+            try:
+                req = urllib.request.Request(url, headers=_NAVER_HDR)
+                with urllib.request.urlopen(req, timeout=15) as r:
+                    j = json.loads(r.read().decode("utf-8", errors="ignore"))
+            except Exception as e:
+                print(f"[Naver스냅샷] {mk} page{page} 오류: {e}")
+                break
+            stocks = j.get("stocks", [])
+            if not stocks:
+                break
+            if total is None:
+                total = j.get("totalCount", 0)
+            for s in stocks:
+                code = s.get("itemCode", "").strip()
+                if not code or not code.isdigit():
+                    continue
+                snapshot[code] = {
+                    "name":      s.get("stockName", code),
+                    "close":     _num(s.get("closePriceRaw") or s.get("closePrice")),
+                    "flux":      _num(s.get("fluctuationsRatio")),
+                    "marketcap": _num(s.get("marketValueRaw")),
+                    "volume":    _num(s.get("accumulatedTradingVolumeRaw")
+                                      or s.get("accumulatedTradingVolume")),
+                    "market":    mk,
+                }
+            if total and len(snapshot) and page * 100 >= total:
+                break
+            page += 1
+            time.sleep(0.05)
+
+    if snapshot:
+        try:
+            with open(SNAPSHOT_FILE, "w", encoding="utf-8") as f:
+                json.dump({"timestamp": datetime.now().isoformat(),
+                           "data": snapshot}, f, ensure_ascii=False)
+        except Exception:
+            pass
+    return snapshot
+
+
+def _load_mover_pool() -> dict[str, str]:
+    """장대양봉 발생 이력 풀 {ticker: 'YYYYMMDD'} 로드"""
+    if os.path.exists(MOVER_POOL_FILE):
+        try:
+            with open(MOVER_POOL_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {}
+
+
+def _save_mover_pool(pool: dict[str, str]) -> None:
+    try:
+        with open(MOVER_POOL_FILE, "w", encoding="utf-8") as f:
+            json.dump(pool, f)
+    except Exception:
+        pass
 
 
 # ── 후보 종목 (최근 N일 내 장대양봉 발생) ─────────────────────────────
@@ -36,48 +137,73 @@ def get_candidates_cached(days_back: int = 70, force_refresh: bool = False) -> l
 
 def _fetch_candidates(days_back: int = 70, min_pct: float = 15.0) -> list[str]:
     """
-    날짜별 전체 종목 데이터를 일괄 수집해 장대양봉 후보를 추출.
-    하루에 2번 호출(KOSPI/KOSDAQ)이므로 days_back * 2 회 API 호출.
-    KRX 배치 API 실패 시 로컬 DB 폴백.
+    장대양봉 후보(시총 5조↓) 추출. Naver 시세 스냅샷 기반.
+
+    KRX 배치 API('전종목시세')는 2026년부터 'LOGOUT' 차단되어 사용 불가.
+    대체 전략:
+      1) Naver 전 종목 스냅샷에서 '오늘 +min_pct% 이상' 급등 소형주 → 후보
+      2) 롤링 풀(kr_mover_pool.json): 매 스캔마다 당일 급등주를 누적,
+         days_back 일 이내 이력만 유지 → "최근 N일 내 장대양봉" 집합 구성
+      3) DB scan_results 국장 이력 종목 추가 (과거 감지 종목 지속 모니터링)
     """
-    today = datetime.now()
+    snapshot = get_kr_market_snapshot()
     big_tickers: set[str] = set()
-    batch_success = False
 
-    # 시총 5조↓ 종목 집합 (오늘 기준)
-    small_cap_set = _get_small_cap_set()
+    if snapshot:
+        # 1. 시총 5조↓ 소형주 전체에 대해 최근 days_back일 장대양봉 prefilter
+        small = [
+            t for t, info in snapshot.items()
+            if 0 < info["marketcap"] < SMALL_CAP_WON
+        ]
+        prefiltered = _prefilter_kr_movers(small, days_back, min_pct)
+        big_tickers |= prefiltered
 
-    for i in range(1, days_back + 1):
-        date_str = (today - timedelta(days=i)).strftime("%Y%m%d")
+        # 2. 롤링 풀에 누적 (prefilter 실패/누락 대비 연속성 확보)
+        today_str = datetime.now().strftime("%Y%m%d")
+        pool = _load_mover_pool()
+        for t in prefiltered:
+            pool[t] = today_str
+        cutoff = (datetime.now() - timedelta(days=days_back)).strftime("%Y%m%d")
+        pool = {t: d for t, d in pool.items() if d >= cutoff}
+        _save_mover_pool(pool)
+        big_tickers |= set(pool)
 
-        for market in ["KOSPI", "KOSDAQ"]:
-            try:
-                df = stock.get_market_ohlcv_by_ticker(date_str, market=market)
-                if df.empty:
-                    continue
-                if "시가" not in df.columns:
-                    continue
+        print(f"   Naver 후보: prefilter {len(prefiltered)}개 "
+              f"(소형주 {len(small)}개 중, ≥{min_pct}%/{days_back}일), "
+              f"롤링풀 {len(pool)}개")
+    else:
+        print("⚠️  Naver 스냅샷 실패 → 로컬 DB 폴백 모드")
 
-                df = df[df["시가"] > 0].copy()
-                df["_pct"] = (df["종가"] - df["시가"]) / df["시가"] * 100
-
-                # 장대양봉 조건 + 시총 필터
-                big = df[df["_pct"] >= min_pct].index.tolist()
-                if small_cap_set:
-                    big = [t for t in big if t in small_cap_set]
-                big_tickers.update(big)
-                batch_success = True
-            except Exception:
-                pass
-
-            time.sleep(0.15)
-
-    if not batch_success or not big_tickers:
-        # KRX 배치 API 불가 → 로컬 DB 기반 폴백
-        print("⚠️  KRX 배치 API 응답 없음 → 로컬 DB 폴백 모드")
-        big_tickers = _fetch_candidates_local(days_back, min_pct)
+    # 3. DB 이력 종목 추가 (Naver 실패 시 폴백 + 정상 시 보강)
+    big_tickers |= _fetch_candidates_local(days_back, min_pct)
 
     return list(big_tickers)
+
+
+def _prefilter_kr_movers(tickers: list[str], days_back: int,
+                         min_pct: float) -> set[str]:
+    """
+    개별 종목 OHLCV(90일)를 빠르게 조회해 최근 days_back일 내
+    min_pct%↑ 장대양봉이 있었던 종목을 추출. (Naver fchart, ~0.03s/종목)
+    """
+    movers: set[str] = set()
+    cutoff = pd.Timestamp(datetime.now() - timedelta(days=days_back))
+    for t in tickers:
+        try:
+            df = get_ohlcv(t, days=90)
+            if df is None or df.empty:
+                continue
+            recent = df[df.index >= cutoff]
+            if recent.empty:
+                continue
+            o = recent["Open"].values
+            c = recent["Close"].values
+            mask = (o > 0) & ((c - o) / o * 100 >= min_pct)
+            if mask.any():
+                movers.add(t)
+        except Exception:
+            continue
+    return movers
 
 
 def _fetch_candidates_local(days_back: int = 70, min_pct: float = 15.0) -> set[str]:
@@ -125,24 +251,13 @@ def _fetch_candidates_local(days_back: int = 70, min_pct: float = 15.0) -> set[s
 
 
 def _get_small_cap_set(threshold_trillion: float = 5.0) -> set[str]:
-    """시총 5조 이하 종목 코드 집합 반환"""
+    """시총 N조 이하 종목 코드 집합 (Naver 스냅샷 기반)"""
     threshold = threshold_trillion * 1e12
-    today = datetime.now().strftime("%Y%m%d")
-
-    small_cap: set[str] = set()
-    for market in ["KOSPI", "KOSDAQ"]:
-        try:
-            df = stock.get_market_cap_by_ticker(today, market=market)
-            if df.empty:
-                continue
-            col = "시가총액" if "시가총액" in df.columns else df.columns[0]
-            filtered = df[df[col] < threshold].index.tolist()
-            small_cap.update(filtered)
-        except Exception:
-            pass
-        time.sleep(0.2)
-
-    return small_cap
+    snapshot = get_kr_market_snapshot()
+    return {
+        t for t, info in snapshot.items()
+        if 0 < info["marketcap"] < threshold
+    }
 
 
 # ── 개별 종목 데이터 ──────────────────────────────────────────────────
@@ -203,17 +318,11 @@ def get_current_price(ticker: str) -> float:
 
 
 def get_market_cap(ticker: str) -> int:
-    """단일 종목 시가총액 (원 단위)"""
-    today = datetime.now().strftime("%Y%m%d")
-    for market in ["KOSPI", "KOSDAQ"]:
-        try:
-            df = stock.get_market_cap_by_ticker(today, market=market)
-            if ticker in df.index:
-                col = "시가총액" if "시가총액" in df.columns else df.columns[0]
-                return int(df.loc[ticker, col])
-        except Exception:
-            pass
-        time.sleep(0.1)
+    """단일 종목 시가총액 (원 단위, Naver 스냅샷 기반)"""
+    snapshot = get_kr_market_snapshot()
+    info = snapshot.get(ticker)
+    if info and info["marketcap"] > 0:
+        return int(info["marketcap"])
     return 0
 
 

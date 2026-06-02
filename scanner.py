@@ -45,11 +45,24 @@ def _indicators(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def _macd_ok(df: pd.DataFrame) -> bool:
-    """MACD histogram > 0 확인. 데이터 없으면 통과."""
+    """MACD 모멘텀 확인: 히스토그램이 양수이거나 상승 전환 중이면 통과.
+
+    눌림목·지지 패턴은 본질적으로 모멘텀이 식는 구간이라 'MACD>0' 단독 조건은
+    충족 불가에 가깝다(실측: 모든 종목 탈락). 따라서 '양수 OR 직전 대비 상승'으로
+    완화해 모멘텀 '반등 시작'을 포착한다. 데이터 없으면 통과.
+    """
     if "MACD_HIST" not in df.columns:
         return True
-    v = df["MACD_HIST"].iloc[-1]
-    return bool(pd.isna(v) or float(v) > 0)
+    h = df["MACD_HIST"]
+    v = h.iloc[-1]
+    if pd.isna(v):
+        return True
+    if float(v) > 0:
+        return True
+    # 음수라도 직전 대비 상승(반등 시작)이면 통과
+    if len(h) >= 2 and not pd.isna(h.iloc[-2]) and float(v) > float(h.iloc[-2]):
+        return True
+    return False
 
 
 def _rsi_val(df: pd.DataFrame) -> float | None:
@@ -1192,8 +1205,8 @@ def scan_all(tickers: list[str]) -> list[dict]:
     cfg_ma_compress  = get_algo_config("MA압축지지")
     cfg_ten_bagger   = get_algo_config("텐배거")
 
-    # 한국장 최소 신뢰도: 낮은 신뢰도 신호는 무조건 차단
-    CONF_MIN_KR = 83
+    # 한국장 최소 신뢰도: 낮은 신뢰도 신호는 무조건 차단 (완화 83→78)
+    CONF_MIN_KR = 78
 
     results: list[dict] = []
 
